@@ -17,7 +17,6 @@
 
 package org.apache.spark.rdd
 
-import java.nio.ByteBuffer
 import java.util.Random
 
 import scala.collection.{Map, mutable}
