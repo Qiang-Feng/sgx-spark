@@ -17,6 +17,7 @@
 
 package org.apache.spark.rdd
 
+import java.nio.ByteBuffer
 import java.util.Random
 
 import scala.collection.{Map, mutable}
@@ -25,12 +26,10 @@ import scala.io.Codec
 import scala.language.implicitConversions
 import scala.reflect.{ClassTag, classTag}
 import scala.util.hashing
-
 import com.clearspring.analytics.stream.cardinality.HyperLogLogPlus
 import org.apache.hadoop.io.{BytesWritable, NullWritable, Text}
 import org.apache.hadoop.io.compress.CompressionCodec
 import org.apache.hadoop.mapred.TextOutputFormat
-
 import org.apache.spark._
 import org.apache.spark.Partitioner._
 import org.apache.spark.annotation.{DeveloperApi, Experimental, Since}
@@ -44,8 +43,7 @@ import org.apache.spark.partial.PartialResult
 import org.apache.spark.storage.{RDDBlockId, StorageLevel}
 import org.apache.spark.util.{BoundedPriorityQueue, Utils}
 import org.apache.spark.util.collection.{OpenHashMap, Utils => collectionUtils}
-import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler,
-  SamplingUtils}
+import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler, SamplingUtils}
 
 /**
  * A Resilient Distributed Dataset (RDD), the basic abstraction in Spark. Represents an immutable,
@@ -1130,10 +1128,28 @@ abstract class RDD[T: ClassTag](
     // Clone the zero value since we will also be serializing it as part of tasks
     var jobResult = Utils.clone(zeroValue, sc.env.closureSerializer.newInstance())
     val cleanOp = sc.clean(op)
-    val foldPartition = (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp)
-    val mergeResult = (index: Int, taskResult: T) => jobResult = op(jobResult, taskResult)
-    sc.runJob(this, foldPartition, mergeResult)
-    jobResult
+
+    if (sc.getConf.isSGXWorkerEnabled()) {
+      val foldPartition = (iter: Iterator[Array[Byte]]) => iter.fold(zeroValue)(cleanOp.asInstanceOf[(Any, Any) => T])
+      val mergeResult = (index: Int, taskResult: Any) => jobResult = op(jobResult, taskResult.asInstanceOf[T])
+      val wrapped = new SGXRDD(this, (itr: Iterator[Any]) => itr, true)
+
+      // Results at this point are encrypted as Array[Byte]
+      sc.runJob(wrapped, foldPartition, mergeResult)
+      // In non-SGX driver just decrypt data here
+      if (!sc.getConf.isSGXDriverEnabled()) {
+        jobResult
+      }
+      // Send data to the SGX driver (to be decrypted there)
+      else {
+        throw new SGXException("Not implemented yet", new Exception("SGX exception"))
+      }
+    } else {
+      val foldPartition = (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp)
+      val mergeResult = (index: Int, taskResult: T) => jobResult = op(jobResult, taskResult)
+      sc.runJob(this, foldPartition, mergeResult)
+      jobResult
+    }
   }
 
   /**

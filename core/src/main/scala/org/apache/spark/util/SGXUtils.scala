@@ -24,6 +24,8 @@ object SGXUtils {
   /** Closures used for SGX tests should be written here (not in Tests) as SGXRunner is using
     *  classLoader to find the appropriate anonymous function */
   val filterEvenNumFunc = (t: Int) => t % 2 == 0
+  val sumFunc = (a: Int, b: Int) => a + b
+  val multiplyFunc = (a: Int, b: Int) => a * b
 
   val mapIncrementOneFunc = (v: Int) => v + 1
   val mapMultiplyByTwoFunc = (v: Int) => v * 2
