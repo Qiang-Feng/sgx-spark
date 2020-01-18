@@ -75,6 +75,20 @@ class RDDSuiteSGX extends SparkFunSuite {
     assert(res(1) == 4)
   }
 
+  test("SGX sample operation") {
+    val nums = sc.makeRDD(Array(1, 2, 3, 4, 5, 6, 7, 8))
+    val res = nums
+      .map(SGXUtils.mapIncrementOneFunc)
+      .filter(SGXUtils.filterEvenNumFunc)
+      .sample(false, 0.6)
+      .collect()
+
+    assert(res.size <= 8)
+    for (i <- res) {
+      assert(i % 2 == 0)
+    }
+  }
+
   test("SGX mapPartitions operations") {
     val nums = sc.makeRDD(Array(1, 2, 3, 4), 2)
     assert(nums.getNumPartitions === 2)

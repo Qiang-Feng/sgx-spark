@@ -20,8 +20,7 @@ package org.apache.spark.rdd
 import java.util.Random
 
 import scala.reflect.ClassTag
-
-import org.apache.spark.{Partition, TaskContext}
+import org.apache.spark.{Partition, SparkEnv, TaskContext}
 import org.apache.spark.util.Utils
 import org.apache.spark.util.random.RandomSampler
 
@@ -63,8 +62,28 @@ private[spark] class PartitionwiseSampledRDD[T: ClassTag, U: ClassTag](
 
   override def compute(splitIn: Partition, context: TaskContext): Iterator[U] = {
     val split = splitIn.asInstanceOf[PartitionwiseSampledRDDPartition]
-    val thisSampler = sampler.clone
-    thisSampler.setSeed(split.seed)
-    thisSampler.sample(firstParent[T].iterator(split.prev, context))
+
+    if (!SparkEnv.get.conf.isSGXWorkerEnabled()) {
+      val thisSampler = sampler.clone
+      thisSampler.setSeed(split.seed)
+      thisSampler.sample(firstParent[T].iterator(split.prev, context))
+    } else {
+      // Trigger iterator pipeline and gather closures
+      firstParent[T].iterator(split.prev, context)
+      for (parFunc <- firstParent[T].funcBuff) {
+        if (!funcBuff.contains(parFunc)) {
+          funcBuff.append(parFunc)
+        }
+      }
+
+      // Add the sampling closure
+      val thisSampler = sampler.clone
+      thisSampler.setSeed(split.seed)
+      funcBuff.append((items: Iterator[Any]) => {
+        thisSampler.sample(items.asInstanceOf[Iterator[T]])
+      })
+
+      firstParent[T].iterator(split.prev, context).asInstanceOf[Iterator[U]]
+    }
   }
 }
