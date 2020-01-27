@@ -1129,15 +1129,17 @@ abstract class RDD[T: ClassTag](
     val cleanOp = sc.clean(op)
 
     if (sc.getConf.isSGXWorkerEnabled()) {
-      val foldPartition = (iter: Iterator[Array[Byte]]) => iter.fold(zeroValue)(cleanOp.asInstanceOf[(Any, Any) => T])
-      val mergeResult = (index: Int, taskResult: Any) => jobResult = op(jobResult, taskResult.asInstanceOf[T])
+      val foldPartition = (iter: Iterator[Array[Byte]]) => {
+        val res = iter.fold(zeroValue)(cleanOp.asInstanceOf[(Any, Any) => T])
+        op(jobResult, res.asInstanceOf[T])
+      }
       val wrapped = new SGXRDD(this, (itr: Iterator[Any]) => itr, true)
 
       // Results at this point are encrypted as Array[Byte]
-      sc.runJob(wrapped, foldPartition, mergeResult)
+      val encryptedRes = sc.runJob(wrapped, foldPartition)
       // In non-SGX driver just decrypt data here
       if (!sc.getConf.isSGXDriverEnabled()) {
-        jobResult
+        encryptedRes.toIterator.next()
       }
       // Send data to the SGX driver (to be decrypted there)
       else {
