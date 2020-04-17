@@ -68,7 +68,7 @@ fi
 # The exit code of the launcher is appended to the output, so the parent shell removes it from the
 # command array and checks the value to see if the launcher succeeded.
 build_command() {
-  $RUNNER "${SPARK_HOME}/sgx-worker/sgxlkl-java-fs.img" -cp "$LAUNCH_CLASSPATH:" org.apache.spark.launcher.Main "$@"
+  SGXLKL_HD_KEY=sgx-worker.img.enc.int.key $RUNNER "${SPARK_HOME}/sgx-worker.img.enc.int" -cp "$LAUNCH_CLASSPATH:" org.apache.spark.launcher.Main "$@"
   printf "%d\0" $?
 }
 
