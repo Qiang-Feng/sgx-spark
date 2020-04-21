@@ -1,0 +1,1 @@
+sgx-lkl-disk create -V --size=128M --encrypt --key-file --integrity --docker=Dockerfile sgx-worker.img.enc.int

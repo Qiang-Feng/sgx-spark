@@ -227,7 +227,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     Array(sum).toIterator
   }
 
-  test("SGXWorker write/read process test") {
+  ignore("SGXWorker write/read process test") {
     val baos = new ByteArrayOutputStream
     val dos = new DataOutputStream(baos)
 
