@@ -90,13 +90,13 @@ class RDDSuiteSGX extends SparkFunSuite {
   }
 
   test("SGX fold operation") {
-    val nums = sc.makeRDD(Array(1, 2, 3, 4))
-
-    val resA = nums.fold(0)(SGXUtils.sumFunc)
+    val numsA = sc.makeRDD(Array(1, 2, 3, 4), 2)
+    val resA = numsA.fold(0)(SGXUtils.sumFunc)
     assert(resA == 10)
 
-    val resB = nums.fold(1)(SGXUtils.multiplyFunc)
-    assert(resB == 24)
+    val numsB = sc.parallelize(Array(1, 2, 3, 4, 5, 6), 3)
+    val resB = numsB.fold(1)(SGXUtils.multiplyFunc)
+    assert(resB == 720)
   }
 
   test("SGX mapPartitions operations") {
