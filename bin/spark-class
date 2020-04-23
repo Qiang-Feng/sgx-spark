@@ -23,9 +23,11 @@ fi
 
 . "${SPARK_HOME}"/bin/load-spark-env.sh
 
+SGX_LKL_JAVA="/usr/local/build/sgx-lkl-java"
+
 # Find the java binary
 if [ -n "${JAVA_HOME}" ]; then
-  RUNNER="/usr/local/build/sgx-lkl-java"
+  RUNNER="${JAVA_HOME}/bin/java"
 else
   if [ "$(command -v java)" ]; then
     RUNNER="java"
@@ -68,7 +70,11 @@ fi
 # The exit code of the launcher is appended to the output, so the parent shell removes it from the
 # command array and checks the value to see if the launcher succeeded.
 build_command() {
-  SGXLKL_HD_KEY=sgx-worker.img.enc.int.key $RUNNER "${SPARK_HOME}/sgx-worker.img.enc.int" -cp "$LAUNCH_CLASSPATH:" org.apache.spark.launcher.Main "$@"
+  if [[ $@ == *"SGXWorker"* ]]; then
+    SGXLKL_HD_KEY="${SPARK_HOME}/sgx-worker.img.enc.int.key" $SGX_LKL_JAVA "${SPARK_HOME}/sgx-worker.img.enc.int" -cp "$LAUNCH_CLASSPATH:" org.apache.spark.launcher.Main "$@"
+  else
+    "$RUNNER" -Xmx128m -cp "$LAUNCH_CLASSPATH" org.apache.spark.launcher.Main "$@"
+  fi
   printf "%d\0" $?
 }
 
