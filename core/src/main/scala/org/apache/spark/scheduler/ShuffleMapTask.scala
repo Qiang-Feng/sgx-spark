@@ -101,7 +101,7 @@ private[spark] class ShuffleMapTask(
       writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
 
       if (SparkEnv.get.conf.isSGXWorkerEnabled()) {
-        val runner = SGXRunner(SGXUtils.toIteratorSizeSGXFunc, SGXFunctionType.SHUFFLE_MAP_BYPASS)
+        val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_MAP_BYPASS)
         // Need to explicitly set the number of partitions here
         val keyMapping = runner.compute(rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]],
           partitionId, context, dep.partitioner.numPartitions).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
