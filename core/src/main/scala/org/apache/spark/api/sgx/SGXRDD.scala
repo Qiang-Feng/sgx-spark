@@ -25,20 +25,21 @@ import scala.collection.mutable
 import org.apache.spark._
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.python.SpecialLengths
+import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.SerializerInstance
 
 private[spark] class SGXRDD(parent: RDD[_],
-                            func: (Iterator[Any]) => Any,
-                            preservePartitoning: Boolean,
+                            func: SGXFunction,
+                            preservePartitioning: Boolean,
                             isFromBarrier: Boolean = false)
   extends RDD[Array[Byte]](parent) {
 
   override def getPartitions: Array[Partition] = firstParent.partitions
 
   override val partitioner: Option[Partitioner] = {
-    if (preservePartitoning) firstParent.partitioner else None
+    if (preservePartitioning) firstParent.partitioner else None
   }
 
   val asJavaRDD: JavaRDD[Array[Byte]] = JavaRDD.fromRDD(this)
@@ -92,4 +93,8 @@ private[spark] object SGXRDD extends Logging {
       workerBroadcasts.getOrElseUpdate(worker, new mutable.HashSet[Long]())
     }
   }
+}
+
+object Types {
+  type SGXFunction = Either[(Iterator[Any]) => Any, (Int, Iterator[Any]) => Any]
 }

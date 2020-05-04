@@ -21,6 +21,7 @@ import java.io.{DataInputStream, DataOutputStream, IOException}
 import java.net.{InetAddress, Socket}
 import java.nio.ByteBuffer
 
+import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.api.sgx.{SGXException, SGXFunctionType, SGXRDD, SpecialSGXChars}
 import org.apache.spark.internal.Logging
 import org.apache.spark.serializer._
@@ -69,7 +70,7 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
     val init_time = System.nanoTime()
     val eval_type = inSock.readInt()
 
-    val funcArray: mutable.ArrayBuffer[(Iterator[Any]) => Any] = readFunction(inSock)
+    val funcArray: mutable.ArrayBuffer[SGXFunction] = readFunction(inSock)
     logInfo(s"Executing ${funcArray.size} (pipelined) funcs")
 
     eval_type match {
@@ -78,7 +79,7 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
         logDebug(s"ShuffleMap Bypass #Partitions ${numOfPartitions}")
         val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
-        // Mapping of encrypted keys to partitions (needed by the shuffler Writter)
+        // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
         val keyMapping = scala.collection.mutable.Map[Any, Any]()
         while (iterator.hasNext) {
           val record = iterator.next()
@@ -91,21 +92,33 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
       case SGXFunctionType.NON_UDF =>
         // Read Iterator
         val iterator = new ReaderIterator(inSock, dataSer)
-        val res = funcArray.head(iterator)
+        val res = funcArray.head match {
+          case Left(a) => a(iterator)
+          case Right(b) => b(partitionId, iterator)
+        }
         SGXRDD.writeIteratorToStream[Any](res.asInstanceOf[Iterator[Any]], dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
+
       case SGXFunctionType.PIPELINED =>
         val iterator = new ReaderIterator(inSock, dataSer)
 
         var res: Iterator[Any] = null
         for (func <- funcArray) {
-          logDebug(s"Running Func ${func.getClass}")
-          res = if (res == null) func(iterator).asInstanceOf[Iterator[Any]] else func(res).asInstanceOf[Iterator[Any]]
+          val input = if (res == null) iterator else res
+          func match {
+            case Left(a) =>
+              logDebug(s"Running func ${a.getClass}")
+              res = a(input).asInstanceOf[Iterator[Any]]
+            case Right(b) =>
+              logDebug(s"Running func ${b.getClass}")
+              res = b(partitionId, input).asInstanceOf[Iterator[Any]]
+          }
         }
         SGXRDD.writeIteratorToStream[Any](res, dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
+
       case _ =>
         logError(s"Unsupported FunctionType ${eval_type}")
     }
@@ -130,15 +143,15 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
     outfile.writeLong(finishTime)
   }
 
-  def readFunction(inSock: DataInputStream): mutable.ArrayBuffer[(Iterator[Any]) => Any] = {
-    val functionArr = mutable.ArrayBuffer[(Iterator[Any]) => Any]()
+  def readFunction(inSock: DataInputStream): mutable.ArrayBuffer[SGXFunction] = {
+    val functionArr = mutable.ArrayBuffer[SGXFunction]()
     var done = false
     while (!done) {
       inSock.readInt() match {
         case func_size if func_size > 0 =>
           val obj = new Array[Byte](func_size)
           inSock.readFully(obj)
-          val closure = closuseSer.deserialize[(Iterator[Any]) => Any](ByteBuffer.wrap(obj))
+          val closure = closuseSer.deserialize[SGXFunction](ByteBuffer.wrap(obj))
           functionArr.append(closure)
         case SpecialSGXChars.END_OF_FUNC_SECTION =>
           logDebug(s"Read ${functionArr.size} functions Done")

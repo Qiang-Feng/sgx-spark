@@ -18,8 +18,8 @@
 package org.apache.spark.rdd
 
 import scala.reflect.ClassTag
-
 import org.apache.spark.SparkEnv
+import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.{Partition, TaskContext}
 
 /**
@@ -40,7 +40,7 @@ import org.apache.spark.{Partition, TaskContext}
 private[spark] class MapPartitionsRDD[U: ClassTag, T: ClassTag](
     var prev: RDD[T],
     f: (TaskContext, Int, Iterator[T]) => Iterator[U],  // (TaskContext, partition index, iterator)
-    cleanFunc: (Iterator[Any]) => Any = null,
+    cleanFunc: SGXFunction = null,
     preservesPartitioning: Boolean = false,
     isFromBarrier: Boolean = false,
     isOrderSensitive: Boolean = false)
@@ -62,7 +62,6 @@ private[spark] class MapPartitionsRDD[U: ClassTag, T: ClassTag](
           funcBuff.append(parFunc)
         }
       }
-      // TODO: support mapPartitionsWithIndex Case?
       assert(cleanFunc != null)
       if (!funcBuff.contains(cleanFunc)) funcBuff.append(cleanFunc)
       firstParent[T].iterator(split, context).asInstanceOf[Iterator[U]]

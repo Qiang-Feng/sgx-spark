@@ -56,7 +56,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     assert(res == 4)
   }
 
-  ignore("SGX mapPartitionsWithIndex") {
+  test("SGX mapPartitionsWithIndex") {
     val nums = sc.makeRDD(Array(1, 2, 3, 4), 2)
     assert(nums.getNumPartitions === 2)
     val partitionSumsWithSplit = nums.mapPartitionsWithIndex(SGXUtils.mapPartitionsWithIndex)

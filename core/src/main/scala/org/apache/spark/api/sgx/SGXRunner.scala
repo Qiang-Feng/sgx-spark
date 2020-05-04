@@ -21,25 +21,26 @@ import java.io._
 import java.net.Socket
 
 import org.apache.spark._
+import org.apache.spark.api.sgx.Types.SGXFunction
 
 import scala.collection.mutable.ArrayBuffer
 
 private[spark] object SGXRunner {
-  def apply(func: (Iterator[Any]) => Any): SGXRunner = {
+  def apply(func: SGXFunction): SGXRunner = {
     new SGXRunner(func, SGXFunctionType.NON_UDF, ArrayBuffer.empty)
   }
 
-  def apply(func: (Iterator[Any]) => Any, funcType: Int): SGXRunner = {
+  def apply(func: SGXFunction, funcType: Int): SGXRunner = {
     new SGXRunner(func, funcType, ArrayBuffer.empty)
   }
 
-  def apply(func: (Iterator[Any]) => Any, funcType: Int, funcs: ArrayBuffer[(Iterator[Any]) => Any]): SGXRunner = {
+  def apply(func: SGXFunction, funcType: Int, funcs: ArrayBuffer[SGXFunction]): SGXRunner = {
     new SGXRunner(func, funcType, funcs)
   }
 }
 
 /** Helper class to run a function in SGX Spark */
-private[spark] class SGXRunner(func: (Iterator[Any]) => Any, funcType: Int, funcs: ArrayBuffer[(Iterator[Any]) => Any])
+private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuffer[SGXFunction])
   extends SGXBaseRunner[Array[Byte], Array[Byte]](func, funcType, funcs) {
 
   override protected def sgxWriterThread(env: SparkEnv,
@@ -53,13 +54,13 @@ private[spark] class SGXRunner(func: (Iterator[Any]) => Any, funcType: Int, func
       override protected def writeFunction(dataOut: DataOutputStream): Unit = {
         logInfo(s"Ser ${funcs.size + 1} closures")
         for (currFunc <- funcs) {
-          logDebug(s"Ser closure: ${currFunc.getClass}")
+          logDebug(s"Ser closure: ${getClosureClass(currFunc)}")
           val command = closureSer.serialize(currFunc)
           dataOut.writeInt(command.array().size)
           dataOut.write(command.array())
         }
         val command = closureSer.serialize(func)
-        logDebug(s"Ser func: ${func.getClass}")
+        logDebug(s"Ser closure: ${getClosureClass(func)}")
         dataOut.writeInt(command.array().size)
         dataOut.write(command.array())
         dataOut.writeInt(SpecialSGXChars.END_OF_FUNC_SECTION)
@@ -70,6 +71,13 @@ private[spark] class SGXRunner(func: (Iterator[Any]) => Any, funcType: Int, func
       override protected def writeIteratorToStream(dataOut: DataOutputStream): Unit = {
         SGXRDD.writeIteratorToStream(inputIterator, iteratorSer, dataOut)
         dataOut.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
+      }
+
+      private def getClosureClass(func: SGXFunction): String = {
+        func match {
+          case Left(a) => a.getClass.toString
+          case Right(b) => b.getClass.toString
+        }
       }
     }
   }
