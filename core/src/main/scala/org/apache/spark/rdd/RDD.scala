@@ -33,6 +33,7 @@ import org.apache.spark._
 import org.apache.spark.Partitioner._
 import org.apache.spark.annotation.{DeveloperApi, Experimental, Since}
 import org.apache.spark.api.java.JavaRDD
+import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.api.sgx.{SGXException, SGXRDD}
 import org.apache.spark.internal.Logging
 import org.apache.spark.partial.BoundedDouble
@@ -98,7 +99,7 @@ abstract class RDD[T: ClassTag](
     _sc
   }
 
-  private[spark] val funcBuff: ArrayBuffer[(Iterator[Any]) => Any] = mutable.ArrayBuffer[(Iterator[Any]) => Any]()
+  private[spark] val funcBuff: ArrayBuffer[SGXFunction] = mutable.ArrayBuffer()
 
   /** Construct an RDD with just a one-to-one dependency on one parent */
   def this(@transient oneParent: RDD[_]) =
@@ -372,7 +373,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD[U, T](
       this,
       f = (context, pid, iter) => iter.map(cleanF.asInstanceOf[T => U]),
-      cleanFunc = (iter: Iterator[Any]) => iter.map(cleanF))
+      cleanFunc = Left((iter: Iterator[Any]) => iter.map(cleanF)))
   }
 
   /**
@@ -383,7 +384,7 @@ abstract class RDD[T: ClassTag](
     val cleanF = sc.clean(f)
     new MapPartitionsRDD[U, T](this,
       (context, pid, iter) => iter.flatMap(cleanF),
-      cleanFunc = (iter: Iterator[Any]) => iter.flatMap(cleanF.asInstanceOf[Any => Iterator[Any]]))
+      cleanFunc = Left((iter: Iterator[Any]) => iter.flatMap(cleanF.asInstanceOf[Any => Iterator[Any]])))
   }
 
   /**
@@ -394,7 +395,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD[T, T](
       this,
       (context, pid, iter) => iter.filter(cleanF),
-      cleanFunc = (iter: Iterator[Any]) => iter.filter(cleanF),
+      cleanFunc = Left((iter: Iterator[Any]) => iter.filter(cleanF)),
       preservesPartitioning = true)
   }
 
@@ -805,7 +806,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD(
       this,
       (context: TaskContext, index: Int, iter: Iterator[T]) => cleanedF(iter),
-      cleanFunc = cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]],
+      cleanFunc = Left(cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]]),
       preservesPartitioning = preservesPartitioning)
   }
 
@@ -829,7 +830,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD(
       this,
       (context: TaskContext, index: Int, iter: Iterator[T]) => f(index, iter),
-      cleanFunc = cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]],
+      cleanFunc = Left(cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]]),
       preservesPartitioning = preservesPartitioning,
       isOrderSensitive = isOrderSensitive)
   }
@@ -844,7 +845,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD(
       this,
       (context: TaskContext, index: Int, iter: Iterator[T]) => f(iter),
-      cleanFunc = cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]],
+      cleanFunc = Left(cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]]),
       preservesPartitioning = preservesPartitioning)
   }
 
@@ -862,6 +863,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD(
       this,
       (context: TaskContext, index: Int, iter: Iterator[T]) => cleanedF(index, iter),
+      cleanFunc = Right(cleanedF.asInstanceOf[(Int, Iterator[Any]) => Iterator[Any]]),
       preservesPartitioning = preservesPartitioning)
   }
 
@@ -959,7 +961,7 @@ abstract class RDD[T: ClassTag](
         itr.foreach(e => result.append(e))
         result.toArray.iterator
       }
-      val wrapped = new SGXRDD(this, toIteratorSizeSGXFunc, true)
+      val wrapped = new SGXRDD(this, Left(toIteratorSizeSGXFunc), true)
       // Results at this point are encrypted as Array[Byte]
       val encryptedRes = sc.runJob(wrapped, (iter: Iterator[_]) => iter.toArray)
       // In non-SGX driver just decrypt data here
@@ -1131,7 +1133,7 @@ abstract class RDD[T: ClassTag](
     if (sc.getConf.isSGXWorkerEnabled()) {
       val foldPartition = (iter: Iterator[Array[Byte]]) => iter.fold(zeroValue)(cleanOp.asInstanceOf[(Any, Any) => T])
       val mergeResult = (index: Int, taskResult: Any) => jobResult = op(jobResult, taskResult.asInstanceOf[T])
-      val wrapped = new SGXRDD(this, (itr: Iterator[Any]) => itr, true)
+      val wrapped = new SGXRDD(this, Left((itr: Iterator[Any]) => itr), true)
 
       // Results at this point are encrypted as Array[Byte]
       sc.runJob(wrapped, foldPartition, mergeResult)
@@ -1227,7 +1229,7 @@ abstract class RDD[T: ClassTag](
         }
         Array(count).iterator
       }
-      val wrapped = new SGXRDD(this, toIteratorSizeSGXFunc, true)
+      val wrapped = new SGXRDD(this, Left(toIteratorSizeSGXFunc), true)
       // Results at this point are encrypted as Array[Byte]
       val encryptedRes = sc.runJob(wrapped, (iter: Iterator[_]) => iter.toArray)
       // In non-SGX driver just decrypt data here

@@ -79,9 +79,9 @@ private[spark] class PartitionwiseSampledRDD[T: ClassTag, U: ClassTag](
       // Add the sampling closure
       val thisSampler = sampler.clone
       thisSampler.setSeed(split.seed)
-      funcBuff.append((items: Iterator[Any]) => {
+      funcBuff.append(Left((items: Iterator[Any]) => {
         thisSampler.sample(items.asInstanceOf[Iterator[T]])
-      })
+      }))
 
       firstParent[T].iterator(split.prev, context).asInstanceOf[Iterator[U]]
     }

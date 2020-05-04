@@ -24,8 +24,8 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark._
+import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.internal.Logging
 import org.apache.spark.util.Utils
 
@@ -33,9 +33,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 
 private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
-                                           func: (Iterator[Any]) => Any,
+                                           func: SGXFunction,
                                            evalType: Int,
-                                           funcs: ArrayBuffer[(Iterator[Any]) => Any]) extends Logging {
+                                           funcs: ArrayBuffer[SGXFunction]) extends Logging {
 
   private val conf = SparkEnv.get.conf
   private val bufferSize = conf.getInt("spark.buffer.size", 65536)
