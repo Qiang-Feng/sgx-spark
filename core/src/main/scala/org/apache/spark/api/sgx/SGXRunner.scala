@@ -48,8 +48,10 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
                                          inputIterator: Iterator[Array[Byte]],
                                          numOfPartitions: Int,
                                          partitionIndex: Int,
-                                         context: TaskContext): WriterIterator = {
-    new WriterIterator(env, worker, inputIterator, numOfPartitions, partitionIndex, context) {
+                                         context: TaskContext,
+                                         aggregator: Option[Aggregator[Any, Any, Any]],
+                                         ordering: Option[Ordering[Any]]): WriterIterator = {
+    new WriterIterator(env, worker, inputIterator, numOfPartitions, partitionIndex, context, aggregator, ordering) {
       /** Writes a command section to the stream connected to the SGX worker */
       override protected def writeFunction(dataOut: DataOutputStream): Unit = {
         logInfo(s"Ser ${funcs.size + 1} closures")
@@ -78,6 +80,24 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
           case Left(a) => a.getClass.toString
           case Right(b) => b.getClass.toString
         }
+      }
+
+      /** Writes an aggregator to the stream connected to the SGX worker */
+      override protected def writeAggregator(dataOut: DataOutputStream): Unit = {
+        logInfo(s"Writing aggregator")
+        val command = closureSer.serialize(aggregator)
+        dataOut.writeInt(command.array().length)
+        dataOut.write(command.array())
+        dataOut.flush()
+      }
+
+      /** Writes an ordering to the stream connected to the SGX worker */
+      override protected def writeOrdering(dataOut: DataOutputStream): Unit = {
+        logInfo(s"Writing ordering")
+        val command = closureSer.serialize(ordering)
+        dataOut.writeInt(command.array().length)
+        dataOut.write(command.array())
+        dataOut.flush()
       }
     }
   }

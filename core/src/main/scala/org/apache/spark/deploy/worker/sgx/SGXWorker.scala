@@ -26,7 +26,7 @@ import org.apache.spark.api.sgx.{SGXException, SGXFunctionType, SGXRDD, SpecialS
 import org.apache.spark.internal.Logging
 import org.apache.spark.serializer._
 import org.apache.spark.util.Utils
-import org.apache.spark.{SGXPartitioner, SparkConf, SparkException, TaskContext}
+import org.apache.spark.{Aggregator, SGXPartitioner, SparkConf, SparkException, TaskContext}
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
@@ -70,7 +70,10 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
     val init_time = System.nanoTime()
     val eval_type = inSock.readInt()
 
-    val funcArray: mutable.ArrayBuffer[SGXFunction] = readFunction(inSock)
+    val funcArray = readFunction(inSock)
+    val aggregator = readAggregator(inSock)
+    val ordering = readOrdering(inSock)
+
     logInfo(s"Executing ${funcArray.size} (pipelined) funcs")
 
     eval_type match {
@@ -83,6 +86,27 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
         val keyMapping = scala.collection.mutable.Map[Any, Any]()
         while (iterator.hasNext) {
           val record = iterator.next()
+          keyMapping(record._1) = sgxPartitioner.getPartition(record._1)
+        }
+        SGXRDD.writeIteratorToStream[Any](keyMapping.toIterator, dataSer, outSock)
+        outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
+        outSock.flush()
+
+      case SGXFunctionType.SHUFFLE_REDUCE =>
+        logInfo(s"Shuffle Reduce")
+        val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+        val sgxPartitioner = new SGXPartitioner(numOfPartitions)
+        // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
+        val keyMapping = scala.collection.mutable.Map[Any, Any]()
+        val values = iterator.toList
+
+        // Perform the sorting and aggregation
+        val sorter = new MinimalExternalSorter(aggregator, Some(sgxPartitioner), ordering)
+        sorter.insertAll(values.toIterator)
+        val tmpIterator = sorter.iterator
+
+        while (tmpIterator.hasNext) {
+          val record = tmpIterator.next()
           keyMapping(record._1) = sgxPartitioner.getPartition(record._1)
         }
         SGXRDD.writeIteratorToStream[Any](keyMapping.toIterator, dataSer, outSock)
@@ -141,6 +165,24 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
     outfile.writeLong(bootTime)
     outfile.writeLong(initTime)
     outfile.writeLong(finishTime)
+  }
+
+  def readAggregator(inSock: DataInputStream): Option[Aggregator[Any, Any, Any]] = {
+    inSock.readInt() match {
+      case aggregatorSize if aggregatorSize > 0 =>
+        val obj = new Array[Byte](aggregatorSize)
+        inSock.readFully(obj)
+        closuseSer.deserialize[Option[Aggregator[Any, Any, Any]]](ByteBuffer.wrap(obj))
+    }
+  }
+
+  def readOrdering(inSock: DataInputStream): Option[Ordering[Any]] = {
+    inSock.readInt() match {
+      case orderingSize if orderingSize > 0 =>
+        val obj = new Array[Byte](orderingSize)
+        inSock.readFully(obj)
+        closuseSer.deserialize[Option[Ordering[Any]]](ByteBuffer.wrap(obj))
+    }
   }
 
   def readFunction(inSock: DataInputStream): mutable.ArrayBuffer[SGXFunction] = {

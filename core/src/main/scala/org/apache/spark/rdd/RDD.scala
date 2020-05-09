@@ -34,14 +34,14 @@ import org.apache.spark.Partitioner._
 import org.apache.spark.annotation.{DeveloperApi, Experimental, Since}
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.sgx.Types.SGXFunction
-import org.apache.spark.api.sgx.{SGXException, SGXRDD}
+import org.apache.spark.api.sgx.{SGXException, SGXFunctionType, SGXRDD, SGXRunner}
 import org.apache.spark.internal.Logging
 import org.apache.spark.partial.BoundedDouble
 import org.apache.spark.partial.CountEvaluator
 import org.apache.spark.partial.GroupedCountEvaluator
 import org.apache.spark.partial.PartialResult
 import org.apache.spark.storage.{RDDBlockId, StorageLevel}
-import org.apache.spark.util.{BoundedPriorityQueue, Utils}
+import org.apache.spark.util.{BoundedPriorityQueue, SGXUtils, Utils}
 import org.apache.spark.util.collection.{OpenHashMap, Utils => collectionUtils}
 import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler, SamplingUtils}
 
@@ -100,6 +100,7 @@ abstract class RDD[T: ClassTag](
   }
 
   private[spark] val funcBuff: ArrayBuffer[SGXFunction] = mutable.ArrayBuffer()
+  private[spark] var preCalculated: ArrayBuffer[Any] = null
 
   /** Construct an RDD with just a one-to-one dependency on one parent */
   def this(@transient oneParent: RDD[_]) =
@@ -283,10 +284,14 @@ abstract class RDD[T: ClassTag](
    * subclasses of RDD.
    */
   final def iterator(split: Partition, context: TaskContext): Iterator[T] = {
-    if (storageLevel != StorageLevel.NONE) {
-      getOrCompute(split, context)
+    if (preCalculated != null) {
+      preCalculated.toIterator.asInstanceOf[Iterator[T]]
     } else {
-      computeOrReadCheckpoint(split, context)
+      if (storageLevel != StorageLevel.NONE) {
+        getOrCompute(split, context)
+      } else {
+        computeOrReadCheckpoint(split, context)
+      }
     }
   }
 
@@ -323,6 +328,25 @@ abstract class RDD[T: ClassTag](
       firstParent[T].iterator(split, context)
     } else {
       compute(split, context)
+    }
+  }
+
+
+  private[spark] def sgxCompute(partition: Partition, context: TaskContext): Unit = {
+    // Trigger iterator pipeline and gather closures
+    iterator(partition, context)
+
+    if (SparkEnv.get.conf.isSGXWorkerEnabled() && funcBuff.nonEmpty) {
+      val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.PIPELINED, funcBuff)
+      funcBuff.clear()
+      assert(funcBuff.isEmpty)
+      val results = runner.compute(compute(partition, context).asInstanceOf[Iterator[Array[Byte]]], partition.index, context, None, None)
+
+      val newResults = new ArrayBuffer[Any]()
+      while (results.hasNext) {
+        newResults.append(results.next())
+      }
+      preCalculated = newResults
     }
   }
 
@@ -956,12 +980,8 @@ abstract class RDD[T: ClassTag](
    */
   def collect(): Array[T] = withScope {
     if (sc.getConf.isSGXWorkerEnabled()) {
-      val toIteratorSizeSGXFunc = (itr: Iterator[Any]) => {
-        val result = new mutable.ArrayBuffer[Any]
-        itr.foreach(e => result.append(e))
-        result.toArray.iterator
-      }
-      val wrapped = new SGXRDD(this, Left(toIteratorSizeSGXFunc), true)
+      val wrapped = new SGXRDD(this, Left(SGXUtils.toIteratorSizeSGXFunc), true)
+
       // Results at this point are encrypted as Array[Byte]
       val encryptedRes = sc.runJob(wrapped, (iter: Iterator[_]) => iter.toArray)
       // In non-SGX driver just decrypt data here
