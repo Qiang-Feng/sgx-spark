@@ -60,6 +60,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     envVars.put("SPARK_LOCAL_DIRS", localdir) // it's also used in monitor thread
 
     val worker: Socket = env.createSGXWorker(envVars.toMap)
+    worker.setSoTimeout(5 * 60 * 1000)
+    worker.setSoLinger(true, 60 * 1000)
     // Whether is the worker released into idle pool or closed
     // TODO: Reuse workers from the pool
     val releasedOrClosed = new AtomicBoolean(false)
@@ -71,6 +73,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
       writerThread.shutdownOnTaskCompletion()
       if (releasedOrClosed.compareAndSet(false, true)) {
         try {
+          worker.getOutputStream.write(SpecialSGXChars.END_OF_STREAM)
+          worker.getOutputStream.flush()
           worker.close()
         } catch {
           case e: Exception =>
@@ -256,8 +260,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
           case length if length > 0 =>
             val obj = new Array[Byte](length)
             stream.readFully(obj)
-            // Not necessary of we are dealing just with bytes
-            return iteratorSer.deserialize[OUT](ByteBuffer.wrap(obj))
+            // Not necessary if we are dealing just with bytes
+            iteratorSer.deserialize[OUT](ByteBuffer.wrap(obj))
           case SpecialSGXChars.EMPTY_DATA =>
             // Array.empty[Byte]
             null.asInstanceOf[OUT]

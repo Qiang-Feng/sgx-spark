@@ -73,6 +73,7 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
       override protected def writeIteratorToStream(dataOut: DataOutputStream): Unit = {
         SGXRDD.writeIteratorToStream(inputIterator, iteratorSer, dataOut)
         dataOut.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
+        dataOut.flush()
       }
 
       private def getClosureClass(func: SGXFunction): String = {

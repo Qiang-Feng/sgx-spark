@@ -79,7 +79,7 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
     eval_type match {
 
       case SGXFunctionType.SHUFFLE_MAP_BYPASS =>
-        logDebug(s"ShuffleMap Bypass #Partitions ${numOfPartitions}")
+        logDebug(s"ShuffleMap Bypass with ${numOfPartitions} partition(s)")
         val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
         // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
@@ -93,7 +93,7 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
         outSock.flush()
 
       case SGXFunctionType.SHUFFLE_REDUCE =>
-        logInfo(s"Shuffle Reduce")
+        logInfo(s"Shuffle Reduce with ${numOfPartitions} partition(s)")
         val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
         // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
@@ -114,6 +114,7 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
         outSock.flush()
 
       case SGXFunctionType.NON_UDF =>
+        logInfo("Non-UDF")
         // Read Iterator
         val iterator = new ReaderIterator(inSock, dataSer)
         val res = funcArray.head match {
@@ -125,7 +126,13 @@ private[spark] class SGXWorker(closuseSer: SerializerInstance, dataSer: Serializ
         outSock.flush()
 
       case SGXFunctionType.PIPELINED =>
+        logInfo("Pipelined")
         val iterator = new ReaderIterator(inSock, dataSer)
+
+        // Fix the case where the first closure completely ignores the iterator,
+        // and therefore we never have a call to ReaderIterator.read() to
+        // check for the SpecialSGXChars.END_OF_DATA_SECTION.
+        iterator.hasNext
 
         var res: Iterator[Any] = null
         for (func <- funcArray) {
@@ -299,6 +306,15 @@ private[deploy] object SGXWorker extends Logging {
     }
   }
 
+  def waitForCompletion(inputStream: DataInputStream): Unit = {
+    inputStream.readInt() match {
+      case SpecialSGXChars.END_OF_STREAM =>
+        logInfo("Received END_OF_STREAM status")
+      case status =>
+        logError(s"Unexpected status received: ${status}")
+    }
+  }
+
   def main(args: Array[String]): Unit = {
     Utils.initDaemon(log)
     val workerDebugEnabled = sys.env("SGX_WORKER_DEBUG").toBoolean
@@ -307,10 +323,12 @@ private[deploy] object SGXWorker extends Logging {
 
     val worker = new SGXWorker(closureSerializer, dataSerializer)
     val socket = localConnect(if (workerDebugEnabled) 65000 else sys.env("SGX_WORKER_FACTORY_PORT").toInt)
+    socket.setSoTimeout(5 * 60 * 1000)
+
     val outStream = new DataOutputStream(socket.getOutputStream())
     val inStream = new DataInputStream(socket.getInputStream())
 
     worker.process(inStream, outStream)
+    waitForCompletion(inStream)
   }
-
 }
