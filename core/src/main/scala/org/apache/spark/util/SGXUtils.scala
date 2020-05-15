@@ -39,6 +39,21 @@ object SGXUtils {
 
 
   val groupBySum = (s: (String, scala.Iterable[Int])) => (s._1, (s._2.sum))
+  val sumGroup = (elem: (String, Iterable[Int])) => (elem._1, elem._2.sum)
+
+  val mapKeyOddEven = (v: (Int, Int)) => (v._1 % 2, v._2)
+  val mapKeys = (t: (String, Int)) => t match {
+    case ("USA", v) => ("test1", v)
+    case ("India", v) => ("test1", v)
+    case ("UK", v) => ("test1", v)
+    case ("Russia", v) => ("test2", v)
+  }
+  val mapKeysToInt = (t: (String, Int)) => t match {
+    case ("USA", v) => (1, v)
+    case ("India", v) => (2, v)
+    case ("UK", v) => (3, v)
+    case ("Russia", v) => (4, v)
+  }
 
 
   /**

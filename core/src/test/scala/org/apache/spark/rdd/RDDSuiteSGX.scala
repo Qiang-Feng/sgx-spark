@@ -24,6 +24,7 @@ import jocket.net.ServerJocket
 import org.apache.spark._
 import org.apache.spark.api.sgx.{SGXFunctionType, SGXRDD, SpecialSGXChars}
 import org.apache.spark.deploy.worker.sgx.{ReaderIterator, SGXWorker}
+import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.{SGXUtils, Utils}
 
 
@@ -123,6 +124,58 @@ class RDDSuiteSGX extends SparkFunSuite {
     assert(resK.size == 3)
   }
 
+  test("SGX Map-Side-Aggregation - Multiple Shuffles") {
+    val kvPairs = sc.parallelize(Array(
+      ("USA", 1), ("USA", 1), ("UK", 1), ("UK", 1),
+      ("India", 1), ("Russia", 1), ("USA", 1), ("USA", 1),
+      ("UK", 1), ("UK", 1), ("India", 1), ("India", 1),
+      ("Russia", 1), ("Russia", 1), ("India", 1)
+    ), 2)
+    testMapSideAggregation(kvPairs)
+  }
+
+  test("SGX Map-Side-Aggregation - Memory Storage") {
+    val kvPairs = sc.parallelize(Array(
+    ("USA", 1), ("USA", 1), ("UK", 1), ("UK", 1),
+    ("India", 1), ("Russia", 1), ("USA", 1), ("USA", 1),
+    ("UK", 1), ("UK", 1), ("India", 1), ("India", 1),
+    ("Russia", 1), ("Russia", 1), ("India", 1)
+    ), 2).persist(StorageLevel.MEMORY_ONLY)
+    testMapSideAggregation(kvPairs)
+  }
+
+  test("SGX Map-Side-Aggregation - ReduceByKey") {
+    val kvPairs = sc.parallelize(Array(
+      ("USA", 1), ("USA", 1), ("UK", 1), ("UK", 1),
+      ("India", 1), ("Russia", 1), ("USA", 1), ("USA", 1),
+      ("UK", 1), ("UK", 1), ("India", 1), ("India", 1),
+      ("Russia", 1), ("Russia", 1), ("India", 1)
+    ), 2)
+    val res = kvPairs.reduceByKey(SGXUtils.sumFunc)
+    assert(res.count() == 4)
+
+    val resK = res.collect().toMap
+    assert(resK.getOrElse("USA", -1) == 4)
+    assert(resK.getOrElse("UK", -1) == 4)
+    assert(resK.getOrElse("India", -1) == 4)
+    assert(resK.getOrElse("Russia", -1) == 3)
+  }
+
+  test("SGX Map-Side-Aggregation - Map Before Group By Key") {
+    val kvPairs = sc.parallelize(Array(
+      ("USA", 1), ("USA", 1), ("UK", 1), ("UK", 1),
+      ("India", 1), ("Russia", 1), ("USA", 1), ("USA", 1),
+      ("UK", 1), ("UK", 1), ("India", 1), ("India", 1),
+      ("Russia", 1), ("Russia", 1), ("India", 1)
+    ), 2)
+    val res = kvPairs.map(SGXUtils.mapKeys).groupByKey.map(SGXUtils.sumGroup)
+    assert(res.count() == 2)
+
+    val resK = res.collect().toMap
+    assert(resK.getOrElse("test1", -1) == 12)
+    assert(resK.getOrElse("test2", -1) == 3)
+  }
+
   test("SGX Iterator Reader test") {
     val baos = new ByteArrayOutputStream
     val dos = new DataOutputStream(baos)
@@ -182,6 +235,19 @@ class RDDSuiteSGX extends SparkFunSuite {
 
     val receivedCount = writeToAndReadFromStream(itemCount, input, iteratorSerializer)
     assert(itemCount == receivedCount)
+  }
+
+  // Test map side aggregation with multiple shuffles for the given RDD
+  def testMapSideAggregation(rdd: RDD[(String, Int)]): Unit = {
+    val res = rdd
+      .reduceByKey(SGXUtils.sumFunc)
+      .map(SGXUtils.mapKeysToInt)
+      .map(SGXUtils.mapKeyOddEven) // USA and UK => 1, India and Russia => 0
+      .reduceByKey(SGXUtils.sumFunc)
+    assert(res.count() == 2)
+    val resK = res.collect.toMap
+    assert(resK.getOrElse(0, -1) == 7)
+    assert(resK.getOrElse(1, -1) == 8)
   }
 
   // Helper method to write items to stream, and read items from stream using serializer
