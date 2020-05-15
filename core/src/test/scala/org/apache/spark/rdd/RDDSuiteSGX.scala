@@ -293,7 +293,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     Array(sum).toIterator
   }
 
-  ignore("SGXWorker write/read process test") {
+  test("SGXWorker write/read process test") {
     val baos = new ByteArrayOutputStream
     val dos = new DataOutputStream(baos)
 
@@ -304,6 +304,8 @@ class RDDSuiteSGX extends SparkFunSuite {
     dos.writeInt(65500)
     // stageId
     dos.writeInt(0)
+    // noOfPartitions
+    dos.writeInt(100)
     // partitionId
     dos.writeInt(20)
     // attemptNumber
@@ -325,9 +327,23 @@ class RDDSuiteSGX extends SparkFunSuite {
 
     dos.writeInt(SGXFunctionType.NON_UDF)
     // Func serialize
-    val command = SparkEnv.get.closureSerializer.newInstance().serialize(test_func)
+    val command = SparkEnv.get.closureSerializer.newInstance().serialize(Left(test_func))
     dos.writeInt(command.array().size)
     dos.write(command.array())
+    dos.writeInt(SpecialSGXChars.END_OF_FUNC_SECTION)
+    dos.flush()
+
+    // Aggregator serialize
+    val aggregator = SparkEnv.get.closureSerializer.newInstance().serialize(None)
+    dos.writeInt(aggregator.array().size)
+    dos.write(aggregator.array())
+    dos.flush()
+
+    // Ordering serialize
+    val ordering = SparkEnv.get.closureSerializer.newInstance().serialize(None)
+    dos.writeInt(ordering.array().size)
+    dos.write(ordering.array())
+
     // Data serialize
     SGXRDD.writeIteratorToStream(Iterator("1", "2", "3"), iteratorSerializer, dos)
     dos.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
