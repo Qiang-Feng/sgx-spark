@@ -23,13 +23,13 @@ import java.util.Properties
 
 import scala.collection.JavaConverters._
 import scala.language.existentials
-
 import org.apache.spark._
 import org.apache.spark.api.sgx.{SGXFunctionType, SGXRunner}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.shuffle.ShuffleWriter
+import org.apache.spark.shuffle.sort.SortShuffleWriter
 import org.apache.spark.util.SGXUtils
 
 /**
@@ -101,10 +101,22 @@ private[spark] class ShuffleMapTask(
       writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
 
       if (SparkEnv.get.conf.isSGXWorkerEnabled()) {
-        val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_MAP_BYPASS)
+        // Compute the RDD for everything until this shuffle
+        // Otherwise we don't know which records to map to which
+        rdd.sgxCompute(partition, context)
+
+        val functionType = if (SortShuffleWriter.shouldBypassMergeSort(SparkEnv.get.conf, dep)) {
+          SGXFunctionType.SHUFFLE_MAP_BYPASS
+        } else {
+          SGXFunctionType.SHUFFLE_REDUCE
+        }
+
+        // Uses SGXRunner to compute the partitions each record should map to
+        val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), functionType)
         // Need to explicitly set the number of partitions here
         val keyMapping = runner.compute(rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]],
-          partitionId, context, dep.partitioner.numPartitions).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+          partitionId, context, dep.aggregator.asInstanceOf[Option[Aggregator[Any, Any, Any]]], dep.keyOrdering.asInstanceOf[Option[Ordering[Any]]],
+          dep.partitioner.numPartitions).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
         val keyMap = scala.collection.mutable.Map[Any, Integer]()
         for (i <- keyMapping) keyMap(i._1) = i._2.asInstanceOf[Integer]
         writer.sgxWrite(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]], keyMap.asJava)

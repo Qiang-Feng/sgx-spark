@@ -51,6 +51,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
   def compute(inputIterator: Iterator[IN],
               partitionIndex: Int,
               context: TaskContext,
+              aggregator: Option[Aggregator[Any, Any, Any]],
+              ordering: Option[Ordering[Any]],
               numOfPartitions: Int = 1): Iterator[OUT] = {
     val startTime = System.currentTimeMillis
     val env = SparkEnv.get
@@ -58,17 +60,21 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     envVars.put("SPARK_LOCAL_DIRS", localdir) // it's also used in monitor thread
 
     val worker: Socket = env.createSGXWorker(envVars.toMap)
+    worker.setSoTimeout(5 * 60 * 1000)
+    worker.setSoLinger(true, 60 * 1000)
     // Whether is the worker released into idle pool or closed
     // TODO: Reuse workers from the pool
     val releasedOrClosed = new AtomicBoolean(false)
 
     // Start a thread to feed the process input from our parent's iterator
-    val writerThread = sgxWriterThread(env, worker, inputIterator, numOfPartitions, partitionIndex, context)
+    val writerThread = sgxWriterThread(env, worker, inputIterator, numOfPartitions, partitionIndex, context, aggregator, ordering)
     // Add task completion Listener
     context.addTaskCompletionListener[Unit] { _ =>
       writerThread.shutdownOnTaskCompletion()
       if (releasedOrClosed.compareAndSet(false, true)) {
         try {
+          worker.getOutputStream.write(SpecialSGXChars.END_OF_STREAM)
+          worker.getOutputStream.flush()
           worker.close()
         } catch {
           case e: Exception =>
@@ -91,7 +97,9 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
                                 inputIterator: Iterator[IN],
                                 numOfPartitions: Int,
                                 partitionIndex: Int,
-                                context: TaskContext): WriterIterator
+                                context: TaskContext,
+                                aggregator: Option[Aggregator[Any, Any, Any]],
+                                ordering: Option[Ordering[Any]]): WriterIterator
 
   /**
     * The thread responsible for writing the data from the SGXRDD's parent iterator to the
@@ -102,7 +110,9 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
                                       inputIterator: Iterator[IN],
                                       numOfPartitions: Int,
                                       partitionIndex: Int,
-                                      context: TaskContext)
+                                      context: TaskContext,
+                                      aggregator: Option[Aggregator[Any, Any, Any]],
+                                      ordering: Option[Ordering[Any]])
     extends Thread(s"stdout writer for SGXRunner TID:${context.taskAttemptId()}") {
 
     @volatile private var _exception: Exception = null
@@ -120,6 +130,12 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
 
     /** Writes a command section to the stream connected to the SGX worker */
     protected def writeFunction(dataOut: DataOutputStream): Unit
+
+    /** Writes an aggregator to the stream connected to the SGX worker */
+    protected def writeAggregator(dataOut: DataOutputStream): Unit
+
+    /** Writes an ordering to the stream connected to the SGX worker */
+    protected def writeOrdering(dataOut: DataOutputStream): Unit
 
     /** Writes input data to the stream connected to the SGX worker */
     protected def writeIteratorToStream(dataOut: DataOutputStream): Unit
@@ -168,6 +184,12 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
         // Write Function Type & Function
         dataOut.writeInt(evalType)
         writeFunction(dataOut)
+
+        // Write aggregator
+        writeAggregator(dataOut)
+
+        // Write ordering
+        writeOrdering(dataOut)
 
         // Write OUT Iterator
         writeIteratorToStream(dataOut)
@@ -238,8 +260,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
           case length if length > 0 =>
             val obj = new Array[Byte](length)
             stream.readFully(obj)
-            // Not necessary of we are dealing just with bytes
-            return iteratorSer.deserialize[OUT](ByteBuffer.wrap(obj))
+            // Not necessary if we are dealing just with bytes
+            iteratorSer.deserialize[OUT](ByteBuffer.wrap(obj))
           case SpecialSGXChars.EMPTY_DATA =>
             // Array.empty[Byte]
             null.asInstanceOf[OUT]

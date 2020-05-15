@@ -156,6 +156,15 @@ class SGXPartitioner(partitions: Int) extends Partitioner {
   override def hashCode: Int = numPartitions
 }
 
+class MappingPartitioner[K](partitions: Int, recordMapping: java.util.Map[K, Integer]) extends Partitioner {
+  override def numPartitions: Int = partitions
+
+  override def getPartition(key: Any): Int = key match {
+    case null => 0
+    case _ => recordMapping.get(key)
+  }
+}
+
 /**
  * A [[org.apache.spark.Partitioner]] that partitions sortable records by range into roughly
  * equal ranges. The ranges are determined by sampling the content of the RDD passed in.

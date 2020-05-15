@@ -103,7 +103,36 @@ private[spark] class SortShuffleWriter[K, V, C](
 
   /** Write a sequence of encrypted records to this task's output following the given recordPartition mapping */
   override def sgxWrite(records: Iterator[Product2[K, V]], recordMapping: java.util.Map[K, Integer]): Unit = {
-    throw new RuntimeException("Not implemented yet!")
+    // Make a partitioner from the given recordMapping
+    val partitioner = new MappingPartitioner(dep.partitioner.numPartitions, recordMapping)
+
+    sorter = if (dep.mapSideCombine) {
+      new ExternalSorter[K, V, C](
+        context, dep.aggregator, Some(partitioner), dep.keyOrdering, dep.serializer)
+    } else {
+      // In this case we pass neither an aggregator nor an ordering to the sorter, because we don't
+      // care whether the keys get sorted in each partition; that will be done on the reduce side
+      // if the operation being run is sortByKey.
+      new ExternalSorter[K, V, V](
+        context, aggregator = None, Some(partitioner), ordering = None, dep.serializer)
+    }
+    sorter.insertAll(records)
+
+    // Don't bother including the time to open the merged output file in the shuffle write time,
+    // because it just opens a single file, so is typically too fast to measure accurately
+    // (see SPARK-3570).
+    val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
+    val tmp = Utils.tempFileWith(output)
+    try {
+      val blockId = ShuffleBlockId(dep.shuffleId, mapId, IndexShuffleBlockResolver.NOOP_REDUCE_ID)
+      val partitionLengths = sorter.writePartitionedFile(blockId, tmp)
+      shuffleBlockResolver.writeIndexFileAndCommit(dep.shuffleId, mapId, partitionLengths, tmp)
+      mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths)
+    } finally {
+      if (tmp.exists() && !tmp.delete()) {
+        logError(s"Error while deleting temp file ${tmp.getAbsolutePath}")
+      }
+    }
   }
 }
 

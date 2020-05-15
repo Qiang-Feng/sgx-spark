@@ -47,7 +47,7 @@ private[spark] class SGXRDD(parent: RDD[_],
   override def compute(split: Partition, context: TaskContext): Iterator[Array[Byte]] = {
     firstParent.iterator(split, context)
     val runner = SGXRunner(func, if (parent.funcBuff.isEmpty) SGXFunctionType.NON_UDF else SGXFunctionType.PIPELINED, parent.funcBuff)
-    runner.compute(firstParent.iterator(split, context), split.index, context)
+    runner.compute(firstParent.iterator(split, context), split.index, context, None, None)
   }
 
 }
