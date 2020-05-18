@@ -325,6 +325,9 @@ class RDDSuiteSGX extends SparkFunSuite {
     SGXRDD.writeUTF(SparkFiles.getRootDirectory(), dos)
     dos.flush()
 
+    // Jar path serialize
+    dos.writeInt(0)
+
     dos.writeInt(SGXFunctionType.NON_UDF)
     // Func serialize
     val command = SparkEnv.get.closureSerializer.newInstance().serialize(Left(test_func))
@@ -349,7 +352,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     dos.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
     dos.flush()
 
-    val worker = new SGXWorker(SparkEnv.get.closureSerializer.newInstance(), SparkEnv.get.serializer.newInstance())
+    val worker = new SGXWorker(SparkEnv.get.serializer.newInstance())
     // Convert bytestream to input
     val bais = new ByteArrayInputStream(baos.toByteArray)
     val dis = new DataInputStream(bais)
