@@ -372,6 +372,11 @@ private[spark] class Executor(
         task.localProperties = taskDescription.properties
         task.setTaskMemoryManager(taskMemoryManager)
 
+        // Add task jars to env
+        taskDescription.addedJars.foreach { jar =>
+          env.newJars.add(jar._1)
+        }
+
         // If this task has been killed before we deserialized it, let's quit now. Otherwise,
         // continue executing the task.
         val killReason = reasonIfKilled
