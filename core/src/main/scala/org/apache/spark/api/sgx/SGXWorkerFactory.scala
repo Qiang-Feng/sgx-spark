@@ -226,7 +226,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
 
       try {
         // Create and start the daemon
-        val command = Arrays.asList("python3", "-u", s"${System.getenv("SPARK_HOME")}/sgx-worker-daemon.py")
+        val command = Arrays.asList("/bin/bash", "-c", s"sudo -E python3 -u ${System.getenv("SPARK_HOME")}/sgx-worker-daemon.py")
         val pb = new ProcessBuilder(command)
         pb.directory(new File(System.getenv("SPARK_HOME")))
         val daemonEnv = pb.environment()

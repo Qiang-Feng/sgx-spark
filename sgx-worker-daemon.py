@@ -4,6 +4,8 @@ import sys
 import struct
 import tempfile
 import uuid
+import random
+import pytun
 
 SPARK_HOME = os.getenv("SPARK_HOME", ".")
 SGX_WORKER_MODULE = "org.apache.spark.deploy.worker.sgx.SGXWorker"
@@ -76,13 +78,32 @@ def daemon():
                 )
                 builder.wait()
 
+            # Generate random local IP
+            ip_base = "10.{}.{}".format(*random.sample(range(0, 255), 2))
+            ip_worker = "{}.1".format(ip_base)
+            ip_host = "{}.2".format(ip_base)
+            print("Base TAP IP: {}".format(ip_base), file=sys.stderr)
+
+            # Create TAP device
+            tap = pytun.TunTapDevice(flags=pytun.IFF_TAP)
+            tap.addr = ip_host
+            tap.dstaddr = ip_worker
+            tap.netmask = '255.255.255.255'
+            tap.up()
+            tap.persist(True)
+            tap.close()
+
+            # TODO: Delete the tap device when we the SGX Worker shuts down
+
             # Launch the SGX Worker process using the newly created image
             worker_command = 'SGXLKL_VERBOSE=1 ' \
-                            'SGXLKL_TAP=sgxlkl_tap0 ' \
+                            'SGXLKL_TAP={} ' \
+                            'SGXLKL_IP4={} ' \
+                            'SGXLKL_GW4={} ' \
                             '/usr/local/build/sgx-lkl-java ' \
                             '{}/{}.img ' \
                             '-cp "{}" ' \
-                            'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(SPARK_HOME, worker_img_name, ":".join(classpath))
+                            'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(tap.name, ip_worker, ip_host, SPARK_HOME, worker_img_name, ":".join(classpath))
             print("Running {}".format(worker_command), file=sys.stderr)
             worker = subprocess.Popen(
                 [worker_command],
@@ -95,6 +116,8 @@ def daemon():
             print("Created worker with PID {}".format(worker.pid), file=sys.stderr)
             stdout_bin.write(int_to_binary(worker.pid))
             stdout_bin.flush()
+
+            # TODO: Delete SGX Worker images once it has exited
 
     except IOError:
         print("Shutting down daemon.", file=sys.stderr)
