@@ -295,9 +295,9 @@ private[deploy] object SGXWorker extends Logging {
   val conf = new SparkConf(loadDefaults = false)
   var dataSerializer: SerializerInstance = _
 
-  def localConnect(port: Int): Socket = {
+  def localConnect(address: String, port: Int): Socket = {
     try {
-      val ia = InetAddress.getByAddress(Array(10, 0, 1, 254).map(_.toByte))
+      val ia = InetAddress.getByName(address)
       val socket = new Socket(ia, port)
       socket
     } catch {
@@ -333,7 +333,10 @@ private[deploy] object SGXWorker extends Logging {
     dataSerializer = SGXWorker.instantiateClass[Serializer](workerSerializer).newInstance()
 
     val worker = new SGXWorker(dataSerializer)
-    val socket = localConnect(if (workerDebugEnabled) 65000 else sys.env("SGX_WORKER_FACTORY_PORT").toInt)
+
+    val address = sys.env("SGXLKL_GW4")
+    val port = if (workerDebugEnabled) 65000 else sys.env("SGX_WORKER_FACTORY_PORT").toInt
+    val socket = localConnect(address, port)
     socket.setSoTimeout(5 * 60 * 1000)
 
     val outStream = new DataOutputStream(socket.getOutputStream())
