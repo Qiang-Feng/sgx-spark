@@ -212,6 +212,38 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
     }
   }
 
+  def enableSGXWorkerReuse(): Unit = {
+    set("spark.sgx.worker.reuse", true.toString)
+  }
+
+  def disableSGXWorkerReuse(): Unit = {
+    set("spark.sgx.worker.reuse", false.toString)
+  }
+
+  def isSGXWorkerReuseEnabled(): Boolean = {
+    getOption("spark.sgx.worker.reuse") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
+  def enableSGXWorkerDaemon(): Unit = {
+    set("spark.sgx.daemon.enabled", true.toString)
+  }
+
+  def disableSGXWorkerDaemon(): Unit = {
+    set("spark.sgx.daemon.enabled", false.toString)
+  }
+
+  def isSGXWorkerDaemonEnabled(): Boolean = {
+    getOption("spark.sgx.daemon.enabled") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
   def enableSGXDriver(): Unit = {
     set("spark.sgx.driver.enabled", true.toString)
   }

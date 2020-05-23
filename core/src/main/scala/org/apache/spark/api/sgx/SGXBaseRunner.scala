@@ -38,6 +38,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
                                            funcs: ArrayBuffer[SGXFunction]) extends Logging {
 
   private val conf = SparkEnv.get.conf
+  private val reuseWorker = conf.isSGXWorkerReuseEnabled()
   private val bufferSize = conf.getInt("spark.buffer.size", 65536)
 
   val closureSer = SparkEnv.get.closureSerializer.newInstance()
@@ -71,10 +72,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     // Add task completion Listener
     context.addTaskCompletionListener[Unit] { _ =>
       writerThread.shutdownOnTaskCompletion()
-      if (releasedOrClosed.compareAndSet(false, true)) {
+      if (!reuseWorker || releasedOrClosed.compareAndSet(false, true)) {
         try {
-          worker.getOutputStream.write(SpecialSGXChars.END_OF_STREAM)
-          worker.getOutputStream.flush()
           worker.close()
         } catch {
           case e: Exception =>
@@ -128,6 +127,14 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
       this.interrupt()
     }
 
+    /** Writes the FINISHED_PROCESSING signal to the SGX worker */
+    def finishProcessing(): Unit = {
+      val dataOut = new DataOutputStream(worker.getOutputStream)
+      dataOut.writeInt(SpecialSGXChars.FINISH_PROCESSING)
+      dataOut.flush()
+      worker.getOutputStream.flush()
+    }
+
     /** Writes a command section to the stream connected to the SGX worker */
     protected def writeFunction(dataOut: DataOutputStream): Unit
 
@@ -145,6 +152,9 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
         TaskContext.setTaskContext(context)
         val stream = new BufferedOutputStream(worker.getOutputStream, bufferSize)
         val dataOut = new DataOutputStream(stream)
+
+        dataOut.writeInt(SpecialSGXChars.BEGIN_PROCESSING)
+
         // Partition index
         dataOut.writeInt(partitionIndex)
         // SGX version of driver
@@ -302,12 +312,12 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     }
 
     protected def handleSGXException(): SGXException = {
-      // Signals that an exception has been thrown in python
+      // Signals that an exception has been thrown in SGX worker
       val exLength = stream.readInt()
       val obj = new Array[Byte](exLength)
       stream.readFully(obj)
       new SGXException(new String(obj, StandardCharsets.UTF_8),
-        writerThread.exception.getOrElse(null))
+        writerThread.exception.orNull)
     }
 
     protected def handleEndOfDataSection(): Unit = {
@@ -322,12 +332,13 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
       //      }
       // Check whether the worker is ready to be re-used.
       if (stream.readInt() == SpecialSGXChars.END_OF_STREAM) {
-        if (releasedOrClosed.compareAndSet(false, true)) {
+        if (reuseWorker && releasedOrClosed.compareAndSet(false, true)) {
           logWarning("SGX Worker now ready to be released!")
-          // env.releasePythonWorker(pythonExec, envVars.asScala.toMap, worker)
+          env.releaseSGXWorker(envVars.toMap, worker)
         }
       }
       eos = true
+      writerThread.finishProcessing()
     }
 
     protected val handleException: PartialFunction[Throwable, OUT] = {
@@ -368,4 +379,6 @@ private[spark] object SpecialSGXChars {
   val END_OF_STREAM = -4
   val EMPTY_DATA = -5
   val NULL = -6
+  val BEGIN_PROCESSING = -7
+  val FINISH_PROCESSING = -8
 }

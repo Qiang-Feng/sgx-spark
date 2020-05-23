@@ -17,7 +17,7 @@
 
 package org.apache.spark.deploy.worker.sgx
 
-import java.io.{DataInputStream, DataOutputStream, File, IOException}
+import java.io.{DataInputStream, DataOutputStream, EOFException, File, IOException}
 import java.net.{InetAddress, Socket, URI}
 import java.nio.ByteBuffer
 
@@ -79,7 +79,7 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
       val localName = new URI(path).getPath.split("/").last
       new File(sparkFilesDir, localName).toURI.toURL
     }
-    closureSerializer = new JavaSerializer(SGXWorker.conf)
+    closureSerializer = new JavaSerializer(null)
       .setDefaultClassLoader(new MutableURLClassLoader(urls.toArray, getClass.getClassLoader))
       .newInstance()
 
@@ -115,11 +115,10 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
         // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
         val keyMapping = scala.collection.mutable.Map[Any, Any]()
-        val values = iterator.toList
 
         // Perform the sorting and aggregation
         val sorter = new MinimalExternalSorter(aggregator, Some(sgxPartitioner), ordering)
-        sorter.insertAll(values.toIterator)
+        sorter.insertAll(iterator)
         val tmpIterator = sorter.iterator
 
         while (tmpIterator.hasNext) {
@@ -172,6 +171,11 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
     }
 
     val finishTime = System.nanoTime()
+
+    val expectedEOS = inSock.readInt()
+    if (expectedEOS != SpecialSGXChars.END_OF_STREAM) {
+      logError(s"Expected END_OF_STREAM, got ${expectedEOS}")
+    }
 
     // Write reportTimes AND Shuffle timestamps
     outSock.writeInt(SpecialSGXChars.END_OF_STREAM)
@@ -287,13 +291,13 @@ private[spark] class ReaderIterator[IN: ClassTag](stream: DataInputStream, dataS
 
 
 private[deploy] object SGXWorker extends Logging {
-
+  // Not used - causes SGXWorker to hang when running in sgx-lkl-java
   val conf = new SparkConf(loadDefaults = false)
   var dataSerializer: SerializerInstance = _
 
   def localConnect(port: Int): Socket = {
     try {
-      val ia = InetAddress.getByName("localhost")
+      val ia = InetAddress.getByAddress(Array(10, 0, 1, 254).map(_.toByte))
       val socket = new Socket(ia, port)
       socket
     } catch {
@@ -309,12 +313,12 @@ private[deploy] object SGXWorker extends Logging {
     // SparkConf, then one taking no arguments
     try {
       cls.getConstructor(classOf[SparkConf], java.lang.Boolean.TYPE)
-        .newInstance(conf, new java.lang.Boolean(false))
+        .newInstance(null, new java.lang.Boolean(false))
         .asInstanceOf[T]
     } catch {
       case _: NoSuchMethodException =>
         try {
-          cls.getConstructor(classOf[SparkConf]).newInstance(conf).asInstanceOf[T]
+          cls.getConstructor(classOf[SparkConf]).newInstance(null).asInstanceOf[T]
         } catch {
           case _: NoSuchMethodException =>
             cls.getConstructor().newInstance().asInstanceOf[T]
@@ -322,17 +326,8 @@ private[deploy] object SGXWorker extends Logging {
     }
   }
 
-  def waitForCompletion(inputStream: DataInputStream): Unit = {
-    inputStream.readInt() match {
-      case SpecialSGXChars.END_OF_STREAM =>
-        logInfo("Received END_OF_STREAM status")
-      case status =>
-        logError(s"Unexpected status received: ${status}")
-    }
-  }
-
   def main(args: Array[String]): Unit = {
-    Utils.initDaemon(log)
+    Utils.initDaemon(log, true)
     val workerDebugEnabled = sys.env("SGX_WORKER_DEBUG").toBoolean
     val workerSerializer = sys.env("SGX_WORKER_SERIALIZER")
     dataSerializer = SGXWorker.instantiateClass[Serializer](workerSerializer).newInstance()
@@ -344,7 +339,33 @@ private[deploy] object SGXWorker extends Logging {
     val outStream = new DataOutputStream(socket.getOutputStream())
     val inStream = new DataInputStream(socket.getInputStream())
 
-    worker.process(inStream, outStream)
-    waitForCompletion(inStream)
+    var runWorker = true
+    while (runWorker) {
+      try {
+        val signal = inStream.readInt()
+        if (signal == SpecialSGXChars.BEGIN_PROCESSING) {
+          worker.process(inStream, outStream)
+
+          // Wait for the FINISH_PROCESSING signal
+          inStream.readInt() match {
+            case SpecialSGXChars.FINISH_PROCESSING =>
+              logInfo("Received da FINISHED_PROCESSING status")
+            case status =>
+              runWorker = false
+              logError(s"Unexpected status received: ${status}")
+          }
+        } else {
+          runWorker = false
+          logError(s"Expected BEGIN_PROCESSING but got ${signal}")
+        }
+      } catch {
+        case _: EOFException =>
+          runWorker = false
+          logInfo("EOFException, SGXWorker shutting down")
+      }
+      System.gc()
+    }
+    socket.close()
+    logInfo("Shutting down SGXWorker")
   }
 }

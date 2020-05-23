@@ -1,0 +1,6 @@
+# Ignore all
+**
+
+# Allow our required jars
+!/assembly/target/scala-2.11/jars/*
+!/work/**
