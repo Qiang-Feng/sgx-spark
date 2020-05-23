@@ -346,6 +346,7 @@ abstract class RDD[T: ClassTag](
       while (results.hasNext) {
         newResults.append(results.next())
       }
+      funcBuff.clear()
 
       if (storageLevel == StorageLevel.NONE) {
         preCalculated(partition.index) = newResults

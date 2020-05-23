@@ -37,8 +37,9 @@ class RDDSuiteSGX extends SparkFunSuite {
     tempDir = Utils.createTempDir()
     conf = new SparkConf().setMaster("local").setAppName("RDD SGX suite test")
     conf.enableSGXWorker()
-//    conf.enableSGXDebug()
-    conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    conf.enableSGXWorkerDaemon()
+    conf.enableSGXWorkerReuse()
+    conf.set("spark.serializer", "org.apache.spark.serializer.JavaSerializer")
     sc = new SparkContext(conf)
   }
 
@@ -350,6 +351,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     // Data serialize
     SGXRDD.writeIteratorToStream(Iterator("1", "2", "3"), iteratorSerializer, dos)
     dos.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
+    dos.writeInt(SpecialSGXChars.END_OF_STREAM)
     dos.flush()
 
     val worker = new SGXWorker(SparkEnv.get.serializer.newInstance())

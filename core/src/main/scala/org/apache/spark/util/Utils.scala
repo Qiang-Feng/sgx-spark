@@ -2562,8 +2562,10 @@ private[spark] object Utils extends Logging {
    * Utility function that should be called early in `main()` for daemons to set up some common
    * diagnostic state.
    */
-  def initDaemon(log: Logger): Unit = {
-    log.info(s"Started daemon with process name: ${Utils.getProcessName()}")
+  def initDaemon(log: Logger, inEnclave: Boolean = false): Unit = {
+    if (!inEnclave) {
+      log.info(s"Started daemon with process name: ${Utils.getProcessName()}")
+    }
     SignalUtils.registerLogger(log)
   }
 
