@@ -22,7 +22,14 @@ DEFAULT_CLASSPATH = [
     "hadoop-common-2.7.3.jar",
     "commons-lang3-3.5.jar",
     "slf4j-log4j12-1.7.16.jar",
-    "log4j-1.2.17.jar"
+    "objenesis-2.5.1.jar",
+    "kryo-shaded-4.0.2.jar",
+    "log4j-1.2.17.jar",
+    "chill_2.11-0.9.3.jar",
+    "chill-java-0.9.3.jar",
+    "minlog-1.3.0.jar",
+    "RoaringBitmap-0.5.11.jar",
+    "avro-1.8.2.jar"
 ]
 
 def daemon():
@@ -55,7 +62,7 @@ def daemon():
                     jar_name = os.path.basename(full_path)
                     classpath.append(jar_name)
 
-                    df.write("COPY {} {}\n".format(full_path, jar_name))
+                    df.write("COPY {} /\n".format(full_path))
                     path_length = binary_to_int(stdin_bin.read(4))
 
                 df.flush()

@@ -25,7 +25,6 @@ import scala.collection.mutable.LinkedHashSet
 
 import org.apache.avro.{Schema, SchemaNormalization}
 
-import org.apache.spark.deploy.history.config._
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.serializer.KryoSerializer
@@ -759,7 +758,7 @@ private[spark] object SparkConf extends Logging {
       AlternateConfig("spark.history.updateInterval", "1.3")),
     "spark.history.fs.cleaner.interval" -> Seq(
       AlternateConfig("spark.history.fs.cleaner.interval.seconds", "1.4")),
-    MAX_LOG_AGE_S.key -> Seq(
+    "spark.history.fs.cleaner.maxAge" -> Seq(
       AlternateConfig("spark.history.fs.cleaner.maxAge.seconds", "1.4")),
     "spark.yarn.am.waitTime" -> Seq(
       AlternateConfig("spark.yarn.applicationMaster.waitTries", "1.3",
@@ -792,7 +791,7 @@ private[spark] object SparkConf extends Logging {
       AlternateConfig("spark.streaming.minRememberDuration", "1.5")),
     "spark.yarn.max.executor.failures" -> Seq(
       AlternateConfig("spark.yarn.max.worker.failures", "1.5")),
-    MEMORY_OFFHEAP_ENABLED.key -> Seq(
+    "spark.memory.offHeap.enabled" -> Seq(
       AlternateConfig("spark.unsafe.offHeap", "1.6")),
     "spark.rpc.message.maxSize" -> Seq(
       AlternateConfig("spark.akka.frameSize", "1.6")),
@@ -800,13 +799,13 @@ private[spark] object SparkConf extends Logging {
       AlternateConfig("spark.yarn.jar", "2.0")),
     "spark.yarn.access.hadoopFileSystems" -> Seq(
       AlternateConfig("spark.yarn.access.namenodes", "2.2")),
-    MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM.key -> Seq(
+    "spark.maxRemoteBlockSizeFetchToMem" -> Seq(
       AlternateConfig("spark.reducer.maxReqSizeShuffleToMem", "2.3")),
-    LISTENER_BUS_EVENT_QUEUE_CAPACITY.key -> Seq(
+    "spark.scheduler.listenerbus.eventqueue.capacity" -> Seq(
       AlternateConfig("spark.scheduler.listenerbus.eventqueue.size", "2.3")),
-    DRIVER_MEMORY_OVERHEAD.key -> Seq(
+    "spark.driver.memoryOverhead" -> Seq(
       AlternateConfig("spark.yarn.driver.memoryOverhead", "2.3")),
-    EXECUTOR_MEMORY_OVERHEAD.key -> Seq(
+    "spark.executor.memoryOverhead" -> Seq(
       AlternateConfig("spark.yarn.executor.memoryOverhead", "2.3"))
   )
 
