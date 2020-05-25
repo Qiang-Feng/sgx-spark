@@ -39,7 +39,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     conf.enableSGXWorker()
     conf.enableSGXWorkerDaemon()
     conf.enableSGXWorkerReuse()
-    conf.set("spark.serializer", "org.apache.spark.serializer.JavaSerializer")
+    conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     sc = new SparkContext(conf)
   }
 
@@ -326,9 +326,6 @@ class RDDSuiteSGX extends SparkFunSuite {
     SGXRDD.writeUTF(SparkFiles.getRootDirectory(), dos)
     dos.flush()
 
-    // Jar path serialize
-    dos.writeInt(0)
-
     dos.writeInt(SGXFunctionType.NON_UDF)
     // Func serialize
     val command = SparkEnv.get.closureSerializer.newInstance().serialize(Left(test_func))
@@ -337,16 +334,10 @@ class RDDSuiteSGX extends SparkFunSuite {
     dos.writeInt(SpecialSGXChars.END_OF_FUNC_SECTION)
     dos.flush()
 
-    // Aggregator serialize
-    val aggregator = SparkEnv.get.closureSerializer.newInstance().serialize(None)
-    dos.writeInt(aggregator.array().size)
-    dos.write(aggregator.array())
+    // No aggregator or ordering
+    dos.writeBoolean(false)
+    dos.writeBoolean(false)
     dos.flush()
-
-    // Ordering serialize
-    val ordering = SparkEnv.get.closureSerializer.newInstance().serialize(None)
-    dos.writeInt(ordering.array().size)
-    dos.write(ordering.array())
 
     // Data serialize
     SGXRDD.writeIteratorToStream(Iterator("1", "2", "3"), iteratorSerializer, dos)
@@ -354,7 +345,10 @@ class RDDSuiteSGX extends SparkFunSuite {
     dos.writeInt(SpecialSGXChars.END_OF_STREAM)
     dos.flush()
 
-    val worker = new SGXWorker(SparkEnv.get.serializer.newInstance())
+    val worker = new SGXWorker(
+      SparkEnv.get.closureSerializer.newInstance(),
+      SparkEnv.get.serializer.newInstance()
+    )
     // Convert bytestream to input
     val bais = new ByteArrayInputStream(baos.toByteArray)
     val dis = new DataInputStream(bais)

@@ -85,19 +85,25 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
 
       /** Writes an aggregator to the stream connected to the SGX worker */
       override protected def writeAggregator(dataOut: DataOutputStream): Unit = {
-        logInfo(s"Writing aggregator")
-        val command = closureSer.serialize(aggregator)
-        dataOut.writeInt(command.array().length)
-        dataOut.write(command.array())
+        dataOut.writeBoolean(aggregator.isDefined)
+        if (aggregator.isDefined) {
+          logInfo(s"Writing aggregator")
+          val agg = closureSer.serialize(aggregator)
+          dataOut.writeInt(agg.array().length)
+          dataOut.write(agg.array())
+        }
         dataOut.flush()
       }
 
       /** Writes an ordering to the stream connected to the SGX worker */
       override protected def writeOrdering(dataOut: DataOutputStream): Unit = {
-        logInfo(s"Writing ordering")
-        val command = closureSer.serialize(ordering)
-        dataOut.writeInt(command.array().length)
-        dataOut.write(command.array())
+        dataOut.writeBoolean(ordering.isDefined)
+        if (ordering.isDefined) {
+          logInfo(s"Writing ordering")
+          val ord = closureSer.serialize(ordering)
+          dataOut.writeInt(ord.array().length)
+          dataOut.write(ord.array())
+        }
         dataOut.flush()
       }
     }
