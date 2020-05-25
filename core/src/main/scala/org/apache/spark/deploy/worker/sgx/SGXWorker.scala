@@ -291,7 +291,6 @@ private[spark] class ReaderIterator[IN: ClassTag](stream: DataInputStream, dataS
 
 
 private[deploy] object SGXWorker extends Logging {
-  // Not used - causes SGXWorker to hang when running in sgx-lkl-java
   val conf = new SparkConf(loadDefaults = false)
   var dataSerializer: SerializerInstance = _
 
@@ -313,12 +312,12 @@ private[deploy] object SGXWorker extends Logging {
     // SparkConf, then one taking no arguments
     try {
       cls.getConstructor(classOf[SparkConf], java.lang.Boolean.TYPE)
-        .newInstance(null, new java.lang.Boolean(false))
+        .newInstance(conf, new java.lang.Boolean(false))
         .asInstanceOf[T]
     } catch {
       case _: NoSuchMethodException =>
         try {
-          cls.getConstructor(classOf[SparkConf]).newInstance(null).asInstanceOf[T]
+          cls.getConstructor(classOf[SparkConf]).newInstance(conf).asInstanceOf[T]
         } catch {
           case _: NoSuchMethodException =>
             cls.getConstructor().newInstance().asInstanceOf[T]
@@ -327,7 +326,7 @@ private[deploy] object SGXWorker extends Logging {
   }
 
   def main(args: Array[String]): Unit = {
-    Utils.initDaemon(log, true)
+    Utils.initDaemon(log, inEnclave = true)
     val workerDebugEnabled = sys.env("SGX_WORKER_DEBUG").toBoolean
     val workerSerializer = sys.env("SGX_WORKER_SERIALIZER")
     dataSerializer = SGXWorker.instantiateClass[Serializer](workerSerializer).newInstance()
