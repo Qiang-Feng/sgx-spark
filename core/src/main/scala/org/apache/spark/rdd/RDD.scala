@@ -18,6 +18,7 @@
 package org.apache.spark.rdd
 
 import java.util.Random
+import java.util.concurrent.Semaphore
 
 import scala.collection.{Map, mutable}
 import scala.collection.mutable.ArrayBuffer
@@ -100,7 +101,7 @@ abstract class RDD[T: ClassTag](
   }
 
   private[spark] val funcBuff: ArrayBuffer[SGXFunction] = mutable.ArrayBuffer()
-  private[spark] var preCalculated: mutable.Map[Int, ArrayBuffer[Any]] = mutable.Map()
+  private[spark] var iteratorCache: mutable.Map[Int, (Semaphore, ArrayBuffer[Any])] = mutable.Map()
 
   /** Construct an RDD with just a one-to-one dependency on one parent */
   def this(@transient oneParent: RDD[_]) =
@@ -287,8 +288,11 @@ abstract class RDD[T: ClassTag](
     if (storageLevel != StorageLevel.NONE) {
       getOrCompute(split, context).asInstanceOf[Iterator[T]]
     } else {
-      if (preCalculated.contains(split.index)) {
-        preCalculated(split.index).toIterator.asInstanceOf[Iterator[T]]
+      if (iteratorCache.contains(split.index)) {
+        // Read the buffer when it is ready
+        val (ready, buf) = iteratorCache(split.index)
+        ready.acquire()
+        buf.iterator.asInstanceOf[Iterator[T]]
       } else {
         computeOrReadCheckpoint(split, context).asInstanceOf[Iterator[T]]
       }
@@ -331,31 +335,34 @@ abstract class RDD[T: ClassTag](
   }
 
 
-  private[spark] def sgxCompute(partition: Partition, context: TaskContext): Iterator[Any] = {
+  private[spark] def sgxCompute(partition: Partition, context: TaskContext) {
     require(SparkEnv.get.conf.isSGXWorkerEnabled(), "SGXWorker is not enabled in config")
 
     // Gather closures
     val it = compute(partition, context)
+    val funcBuffSnapshot = new ArrayBuffer[SGXFunction]()
+    funcBuffSnapshot.appendAll(funcBuff)
+    funcBuff.clear()
 
-    if (funcBuff.nonEmpty) {
+    val results = if (funcBuffSnapshot.nonEmpty) {
       // Compute the required partition
-      val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.PIPELINED, funcBuff)
-      val results = runner.compute(it.asInstanceOf[Iterator[Array[Byte]]], partition.index, context, None, None)
-
-      val newResults = new ArrayBuffer[Any]()
-      while (results.hasNext) {
-        newResults.append(results.next())
-      }
-      funcBuff.clear()
-
-      if (storageLevel == StorageLevel.NONE) {
-        preCalculated(partition.index) = newResults
-      }
-      newResults.toIterator
+      val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.PIPELINED, funcBuffSnapshot)
+      runner.compute(it.asInstanceOf[Iterator[Array[Byte]]], partition.index, context, None, None)
     } else {
-      // We might need to store the data in preCalculated here? Who knows.
-      it
+      it.asInstanceOf[Iterator[Any]]
     }
+
+    val ready = new Semaphore(0)
+    val buf = new ArrayBuffer[Any]()
+    iteratorCache(partition.index) = (ready, buf)
+
+    // Start new thread to read the results into the iterator cache
+    new Thread() {
+      while (results.hasNext) {
+        buf.append(results.next())
+      }
+      ready.release(Int.MaxValue)
+    }.start()
   }
 
   /**
@@ -369,6 +376,11 @@ abstract class RDD[T: ClassTag](
       readCachedBlock = false
       if (SparkEnv.get.conf.isSGXWorkerEnabled()) {
         sgxCompute(partition, context)
+
+        // Read the buffer when it is ready
+        val (ready, buf) = iteratorCache(partition.index)
+        ready.acquire()
+        buf.iterator
       } else {
         computeOrReadCheckpoint(partition, context)
       }

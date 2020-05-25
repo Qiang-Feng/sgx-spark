@@ -191,12 +191,6 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
         // TODO PANOS: ignore encrypted Broadcast variables for now
         dataOut.flush()
 
-        logInfo(s"Writing task jar paths")
-        dataOut.writeInt(env.newJars.size)
-        env.newJars.foreach { path =>
-          SGXRDD.writeUTF(path, dataOut)
-        }
-
         // Write Function Type & Function
         dataOut.writeInt(evalType)
         writeFunction(dataOut)
