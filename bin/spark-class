@@ -23,8 +23,6 @@ fi
 
 . "${SPARK_HOME}"/bin/load-spark-env.sh
 
-SGX_LKL_JAVA="/usr/local/build/sgx-lkl-java"
-
 # Find the java binary
 if [ -n "${JAVA_HOME}" ]; then
   RUNNER="${JAVA_HOME}/bin/java"
