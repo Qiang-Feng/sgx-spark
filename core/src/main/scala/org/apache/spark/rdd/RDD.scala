@@ -34,7 +34,7 @@ import org.apache.spark.Partitioner._
 import org.apache.spark.annotation.{DeveloperApi, Experimental, Since}
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.sgx.Types.SGXFunction
-import org.apache.spark.api.sgx.{SGXException, SGXFunctionType, SGXRDD, SGXRunner}
+import org.apache.spark.api.sgx.{SGXException, SGXFunctionType, SGXRDD, SGXRunner, SharableIteratorGenerator}
 import org.apache.spark.internal.Logging
 import org.apache.spark.partial.BoundedDouble
 import org.apache.spark.partial.CountEvaluator
@@ -100,7 +100,7 @@ abstract class RDD[T: ClassTag](
   }
 
   private[spark] val funcBuff: ArrayBuffer[SGXFunction] = mutable.ArrayBuffer()
-  private[spark] var preCalculated: mutable.Map[Int, ArrayBuffer[Any]] = mutable.Map()
+  private[spark] var iteratorCache: mutable.Map[Int, SharableIteratorGenerator] = mutable.Map()
 
   /** Construct an RDD with just a one-to-one dependency on one parent */
   def this(@transient oneParent: RDD[_]) =
@@ -287,8 +287,8 @@ abstract class RDD[T: ClassTag](
     if (storageLevel != StorageLevel.NONE) {
       getOrCompute(split, context).asInstanceOf[Iterator[T]]
     } else {
-      if (preCalculated.contains(split.index)) {
-        preCalculated(split.index).toIterator.asInstanceOf[Iterator[T]]
+      if (iteratorCache.contains(split.index)) {
+        iteratorCache(split.index).getIterator().asInstanceOf[Iterator[T]]
       } else {
         computeOrReadCheckpoint(split, context).asInstanceOf[Iterator[T]]
       }
@@ -336,22 +336,17 @@ abstract class RDD[T: ClassTag](
 
     // Gather closures
     val it = compute(partition, context)
+    val snapshotFuncBuff = new ArrayBuffer[SGXFunction]()
+    snapshotFuncBuff.appendAll(funcBuff)
+    funcBuff.clear()
 
-    if (funcBuff.nonEmpty) {
+    if (snapshotFuncBuff.nonEmpty) {
       // Compute the required partition
-      val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.PIPELINED, funcBuff)
+      val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.PIPELINED, snapshotFuncBuff)
       val results = runner.compute(it.asInstanceOf[Iterator[Array[Byte]]], partition.index, context, None, None)
 
-      val newResults = new ArrayBuffer[Any]()
-      while (results.hasNext) {
-        newResults.append(results.next())
-      }
-      funcBuff.clear()
-
-      if (storageLevel == StorageLevel.NONE) {
-        preCalculated(partition.index) = newResults
-      }
-      newResults.toIterator
+      iteratorCache(partition.index) = new SharableIteratorGenerator(partition.index, results)
+      iteratorCache(partition.index).getIterator()
     } else {
       // We might need to store the data in preCalculated here? Who knows.
       it
