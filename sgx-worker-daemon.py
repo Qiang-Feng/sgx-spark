@@ -33,7 +33,7 @@ DEFAULT_CLASSPATH = [
 def daemon():
     # Load Dockerfile template
     df_template = ""
-    with open("Dockerfile.template", "r") as df:
+    with open("Dockerfile", "r") as df:
         df_template += df.read()
 
     stdin_bin = os.fdopen(sys.stdin.fileno(), "rb", 4)
@@ -66,13 +66,13 @@ def daemon():
 
             # Launch the SGX Worker process using the newly created image
             worker_command = 'SGXLKL_VERBOSE=1 ' \
-                            'SGXLKL_TAP={} ' \
-                            'SGXLKL_IP4={} ' \
-                            'SGXLKL_GW4={} ' \
-                            '/usr/local/build/sgx-lkl-java ' \
-                            '{}/sgx-worker.img ' \
-                            '-cp "{}" ' \
-                            'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(tap.name, ip_worker, ip_host, SPARK_HOME, ":".join(DEFAULT_CLASSPATH))
+                             'SGXLKL_TAP={} ' \
+                             'SGXLKL_IP4={} ' \
+                             'SGXLKL_GW4={} ' \
+                             '/usr/local/build/sgx-lkl-java ' \
+                             '{}/sgx-worker.img ' \
+                             '-cp "{}" ' \
+                             'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(tap.name, ip_worker, ip_host, SPARK_HOME, ":".join(DEFAULT_CLASSPATH))
             print("Running {}".format(worker_command), file=sys.stderr)
             worker = subprocess.Popen(
                 [worker_command],
