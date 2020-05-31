@@ -879,7 +879,7 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD(
       this,
       (context: TaskContext, index: Int, iter: Iterator[T]) => f(index, iter),
-      cleanFunc = Left(cleanedF.asInstanceOf[(Iterator[Any]) => Iterator[Any]]),
+      cleanFunc = Right(cleanedF.asInstanceOf[(Int, Iterator[Any]) => Iterator[Any]]),
       preservesPartitioning = preservesPartitioning,
       isOrderSensitive = isOrderSensitive)
   }
@@ -1176,15 +1176,34 @@ abstract class RDD[T: ClassTag](
     val cleanOp = sc.clean(op)
 
     if (sc.getConf.isSGXWorkerEnabled()) {
-      val foldPartition = (iter: Iterator[Array[Byte]]) => iter.fold(zeroValue)(cleanOp.asInstanceOf[(Any, Any) => T])
-      val mergeResult = (index: Int, taskResult: Any) => jobResult = op(jobResult, taskResult.asInstanceOf[T])
-      val wrapped = new SGXRDD(this, Left((itr: Iterator[Any]) => itr), true)
+      val foldPartition = (iter: Iterator[Any]) => {
+        Array(iter.fold(zeroValue)(cleanOp.asInstanceOf[(Any, Any) => T])).toIterator
+      }
+      val wrapped = new SGXRDD(this, Left(foldPartition), true)
+      val partitionResults = sc.runJob(wrapped, (iter: Iterator[_]) => iter.toArray).map { _(0) }
 
-      // Results at this point are encrypted as Array[Byte]
-      sc.runJob(wrapped, foldPartition, mergeResult)
+      // All partitions and closures should have been read now
+      iteratorCache.clear()
+      funcBuff.clear()
+
+      // Update the RDD iterator cache to the partition results
+      val iteratorBuffer = new ArrayBuffer[Any]()
+      iteratorCache(0) = (new Semaphore(Int.MaxValue), iteratorBuffer)
+      iteratorBuffer.appendAll(partitionResults)
+
+      // Merge results closure
+      val mergeResults = (iter: Iterator[Any]) => {
+        iter.foreach { item => jobResult = op(jobResult, item.asInstanceOf[T]) }
+        Array(jobResult).toIterator
+      }
+
+      val resultsWrapped = new SGXRDD(this, Left(mergeResults), true)
+      val finalResult = sc.runJob(resultsWrapped, (iter: Iterator[_]) => iter.toArray, Seq(0))
+
       // In non-SGX driver just decrypt data here
       if (!sc.getConf.isSGXDriverEnabled()) {
-        jobResult
+        val dataIt = finalResult.flatten.toIterator
+        dataIt.next().asInstanceOf[T]
       }
       // Send data to the SGX driver (to be decrypted there)
       else {
