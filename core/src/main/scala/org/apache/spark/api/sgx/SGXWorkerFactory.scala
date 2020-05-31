@@ -42,6 +42,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
   val simpleWorkers = new mutable.WeakHashMap[Socket, Process]()
   val daemonWorkers = new mutable.WeakHashMap[Socket, Int]()
   val idleWorkers = new mutable.Queue[Socket]()
+  val workerJars = new mutable.WeakHashMap[Socket, mutable.Set[String]]()
 
   /**
    * TODO: start-sgx-slave.sh no longer works as we rely on the daemon
@@ -95,21 +96,22 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
     null
   }
 
-  def create(): Socket = {
+  def create(): (Socket, mutable.Set[String]) = {
     if (useDaemon) {
       synchronized {
         if (idleWorkers.nonEmpty) {
-          return idleWorkers.dequeue()
+          val worker = idleWorkers.dequeue()
+          return (worker, workerJars(worker))
         }
       }
       createThroughDaemon()
     } else {
-      createSimpleSGXWorker()
+      (createSimpleSGXWorker(), new mutable.HashSet[String]())
     }
   }
 
-  private def createThroughDaemon(): Socket = {
-    def createSocket(): Socket = {
+  private def createThroughDaemon(): (Socket, mutable.Set[String]) = {
+    def createSocket(): (Socket, mutable.Set[String]) = {
       val serverSocketPort = if (SparkEnv.get.conf.isSGXDebugEnabled()) 65000 else 0
       var serverSocket: ServerSocket = null
 
@@ -125,31 +127,17 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
         outputStream.flush()
         daemon.getOutputStream.flush()
 
-        // Write new jars to daemon
-        val env = SparkEnv.get
-        val sparkFilesDir = SparkFiles.getRootDirectory()
-        val newJars = env.newJars.map { path =>
-          val localName = new URI(path).getPath.split("/").last
-          new File(sparkFilesDir, localName).toURI.toURL.getPath
-        }
-        logInfo(newJars.toString())
-        newJars.foreach { path =>
-          outputStream.writeInt(path.length)
-          outputStream.write(path.getBytes(StandardCharsets.UTF_8))
-        }
-        outputStream.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
-        outputStream.flush()
-        daemon.getOutputStream.flush()
-
         try {
           val socket = serverSocket.accept()
           log.info(s"SGXWorker successfully connected at Port:${serverSocket.getLocalPort}")
 
           val inputStream = new DataInputStream(daemon.getInputStream)
           val workerPid = inputStream.readInt()
+          val socketJars = mutable.HashSet[String]()
           daemonWorkers.put(socket, workerPid)
+          workerJars.put(socket, socketJars)
 
-          socket
+          (socket, socketJars)
         } catch {
           case e: Exception =>
             throw new SparkException("SGXWorker worker failed to connect back.", e)

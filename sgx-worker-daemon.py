@@ -2,8 +2,6 @@ import subprocess
 import os
 import sys
 import struct
-import tempfile
-import uuid
 import random
 import pytun
 
@@ -49,42 +47,6 @@ def daemon():
             # Set factory port in worker env
             ENV["SGX_WORKER_FACTORY_PORT"] = str(factory_port)
 
-            # Create temporary Dockerfile with newJars for new SGXWorker image
-            classpath = DEFAULT_CLASSPATH
-            worker_img_name = uuid.uuid4()
-            with tempfile.NamedTemporaryFile(mode="w+", dir=SPARK_HOME) as df:
-                df.write(df_template)
-
-                # Read new jars
-                path_length = binary_to_int(stdin_bin.read(4))
-                while path_length != END_OF_DATA_SECTION:
-                    full_path = stdin_bin.read(path_length).decode("utf-8").replace(SPARK_HOME, "")
-                    jar_name = os.path.basename(full_path)
-                    classpath.append(jar_name)
-
-                    df.write("COPY {} /\n".format(full_path))
-                    path_length = binary_to_int(stdin_bin.read(4))
-
-                df.flush()
-
-                # Build docker image with new Dockerfile
-                builder_command = "yes | " \
-                                  "/usr/local/build/sgx-lkl-disk " \
-                                  "create " \
-                                  "-V " \
-                                  "--size=512M " \
-                                  "--docker={} " \
-                                  "{}/{}.img".format(df.name, SPARK_HOME, worker_img_name)
-                print("Running: {}".format(builder_command), file=sys.stderr)
-                builder = subprocess.Popen(
-                    [builder_command],
-                    shell=True,
-                    stdout=sys.stderr,
-                    stderr=sys.stderr,
-                    env=ENV
-                )
-                builder.wait()
-
             # Generate random local IP
             ip_base = "10.{}.{}".format(*random.sample(range(0, 255), 2))
             ip_worker = "{}.1".format(ip_base)
@@ -108,9 +70,9 @@ def daemon():
                             'SGXLKL_IP4={} ' \
                             'SGXLKL_GW4={} ' \
                             '/usr/local/build/sgx-lkl-java ' \
-                            '{}/{}.img ' \
+                            '{}/sgx-worker.img ' \
                             '-cp "{}" ' \
-                            'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(tap.name, ip_worker, ip_host, SPARK_HOME, worker_img_name, ":".join(classpath))
+                            'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(tap.name, ip_worker, ip_host, SPARK_HOME, ":".join(DEFAULT_CLASSPATH))
             print("Running {}".format(worker_command), file=sys.stderr)
             worker = subprocess.Popen(
                 [worker_command],

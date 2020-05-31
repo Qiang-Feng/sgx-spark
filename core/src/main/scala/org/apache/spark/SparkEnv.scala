@@ -121,7 +121,7 @@ class SparkEnv (
   }
 
   private[spark]
-  def createSGXWorker(envVars: Map[String, String]): java.net.Socket = {
+  def createSGXWorker(envVars: Map[String, String]): (java.net.Socket, mutable.Set[String]) = {
     synchronized {
       sgxWorkers.getOrElseUpdate(envVars, new SGXWorkerFactory(envVars)).create()
     }

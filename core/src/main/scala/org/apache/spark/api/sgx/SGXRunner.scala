@@ -23,6 +23,7 @@ import java.net.Socket
 import org.apache.spark._
 import org.apache.spark.api.sgx.Types.SGXFunction
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 private[spark] object SGXRunner {
@@ -45,13 +46,14 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
 
   override protected def sgxWriterThread(env: SparkEnv,
                                          worker: Socket,
+                                         workerJars: mutable.Set[String],
                                          inputIterator: Iterator[Array[Byte]],
                                          numOfPartitions: Int,
                                          partitionIndex: Int,
                                          context: TaskContext,
                                          aggregator: Option[Aggregator[Any, Any, Any]],
                                          ordering: Option[Ordering[Any]]): WriterIterator = {
-    new WriterIterator(env, worker, inputIterator, numOfPartitions, partitionIndex, context, aggregator, ordering) {
+    new WriterIterator(env, worker, workerJars, inputIterator, numOfPartitions, partitionIndex, context, aggregator, ordering) {
       /** Writes a command section to the stream connected to the SGX worker */
       override protected def writeFunction(dataOut: DataOutputStream): Unit = {
         logInfo(s"Ser ${funcs.size + 1} closures")

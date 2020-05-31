@@ -18,9 +18,11 @@
 package org.apache.spark.api.sgx
 
 import java.io._
-import java.net.{ServerSocket, Socket}
+import java.net.{ServerSocket, Socket, URI}
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.JavaConverters._
@@ -29,6 +31,7 @@ import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.internal.Logging
 import org.apache.spark.util.Utils
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 
@@ -60,7 +63,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     val localdir = env.blockManager.diskBlockManager.localDirs.map(f => f.getPath()).mkString(",")
     envVars.put("SPARK_LOCAL_DIRS", localdir) // it's also used in monitor thread
 
-    val worker: Socket = env.createSGXWorker(envVars.toMap)
+    val (worker, workerJars) = env.createSGXWorker(envVars.toMap)
     worker.setSoTimeout(5 * 60 * 1000)
     worker.setSoLinger(true, 60 * 1000)
     // Whether is the worker released into idle pool or closed
@@ -68,7 +71,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     val releasedOrClosed = new AtomicBoolean(false)
 
     // Start a thread to feed the process input from our parent's iterator
-    val writerThread = sgxWriterThread(env, worker, inputIterator, numOfPartitions, partitionIndex, context, aggregator, ordering)
+    val writerThread = sgxWriterThread(env, worker, workerJars, inputIterator, numOfPartitions, partitionIndex, context, aggregator, ordering)
     // Add task completion Listener
     context.addTaskCompletionListener[Unit] { _ =>
       writerThread.shutdownOnTaskCompletion()
@@ -93,6 +96,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
   // TODO: Implement SharedMemory / Arrow support
   protected def sgxWriterThread(env: SparkEnv,
                                 worker: Socket,
+                                workerJars: mutable.Set[String],
                                 inputIterator: Iterator[IN],
                                 numOfPartitions: Int,
                                 partitionIndex: Int,
@@ -106,6 +110,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     */
   abstract class WriterIterator(env: SparkEnv,
                                       worker: Socket,
+                                      workerJars: mutable.Set[String],
                                       inputIterator: Iterator[IN],
                                       numOfPartitions: Int,
                                       partitionIndex: Int,
@@ -190,6 +195,28 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
         SGXRDD.writeUTF(SparkFiles.getRootDirectory(), dataOut)
         // TODO PANOS: ignore encrypted Broadcast variables for now
         dataOut.flush()
+
+        // Write the new JAR files
+        val digester = MessageDigest.getInstance("MD5")
+        var newJars = 0
+        env.newJars.foreach { jarPath =>
+          val localName = new URI(jarPath).getPath.split("/").last
+          val newJar = Files.readAllBytes(Paths.get(SparkFiles.getRootDirectory(), localName))
+          val fileHash = BigInt(1, digester.digest(newJar)).toString(16)
+
+          if (!workerJars.contains(fileHash)) {
+            dataOut.writeInt(newJar.length)
+            dataOut.flush()
+            SGXRDD.writeUTF(fileHash, dataOut)
+            dataOut.write(newJar)
+            dataOut.flush()
+
+            workerJars.add(fileHash)
+            newJars += 1
+          }
+        }
+        dataOut.writeInt(SpecialSGXChars.END_OF_JARS)
+        logInfo(s"Sent ${newJars} new jar files")
 
         // Write Function Type & Function
         dataOut.writeInt(evalType)
@@ -373,6 +400,7 @@ private[spark] object SpecialSGXChars {
   val END_OF_STREAM = -4
   val EMPTY_DATA = -5
   val NULL = -6
-  val BEGIN_PROCESSING = -7
-  val FINISH_PROCESSING = -8
+  val END_OF_JARS = -7
+  val BEGIN_PROCESSING = -8
+  val FINISH_PROCESSING = -9
 }

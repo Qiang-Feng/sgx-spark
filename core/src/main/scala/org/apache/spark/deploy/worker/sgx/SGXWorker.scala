@@ -18,8 +18,9 @@
 package org.apache.spark.deploy.worker.sgx
 
 import java.io.{DataInputStream, DataOutputStream, EOFException, File, IOException}
-import java.net.{InetAddress, Socket, URI}
+import java.net.{InetAddress, Socket, URL}
 import java.nio.ByteBuffer
+import java.nio.file.Files
 
 import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.api.sgx.{SGXException, SGXFunctionType, SGXRDD, SpecialSGXChars}
@@ -31,9 +32,13 @@ import org.apache.spark.{Aggregator, SGXPartitioner, SparkConf, SparkException, 
 import scala.collection.mutable
 import scala.reflect.ClassTag
 
-private[spark] class SGXWorker(closureSer: SerializerInstance, dataSer: SerializerInstance) extends Logging {
+private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
   val SYSTEM_NAME = "SparkSGXWorker"
   val ENDPOINT_NAME = "SecureWorker"
+  var closureSerializer: SerializerInstance = new JavaSerializer(SGXWorker.conf).newInstance()
+
+  private val jarsLoaded = mutable.HashSet[URL]()
+
   if (dataSer == null) {
     throw new SGXException("Worker data serializer not set", new RuntimeException)
   }
@@ -65,6 +70,37 @@ private[spark] class SGXWorker(closureSer: SerializerInstance, dataSer: Serializ
       localProps(k) = v
     }
     val sparkFilesDir = SGXRDD.readUTF(inSock)
+
+    // Read the JAR hash
+    var endOfJars = false
+    var newJars = 0
+    while (!endOfJars) {
+      inSock.readInt() match {
+        case jarLength if jarLength > 0 =>
+          val hash = SGXRDD.readUTF(inSock)
+          val jarFilename = s"/${hash}.jar"
+
+          // Write the new file
+          val jarFile = new File(jarFilename)
+          jarFile.createNewFile
+          val jarBytes = new Array[Byte](jarLength)
+          inSock.readFully(jarBytes)
+          Files.write(jarFile.toPath, jarBytes)
+
+          jarsLoaded.add(jarFile.toURI.toURL)
+          newJars += 1
+
+        case SpecialSGXChars.END_OF_JARS =>
+          endOfJars = true
+      }
+    }
+
+    logInfo(s"Received ${newJars} new jar files")
+    if (newJars > 0) {
+      closureSerializer = new JavaSerializer(SGXWorker.conf)
+        .setDefaultClassLoader(new MutableURLClassLoader(jarsLoaded.toArray, getClass.getClassLoader))
+        .newInstance()
+    }
 
     // Read Function Type & Function
     val initTime = System.nanoTime()
@@ -185,7 +221,7 @@ private[spark] class SGXWorker(closureSer: SerializerInstance, dataSer: Serializ
         case aggregatorSize if aggregatorSize > 0 =>
           val obj = new Array[Byte](aggregatorSize)
           inSock.readFully(obj)
-          closureSer.deserialize[Option[Aggregator[Any, Any, Any]]](ByteBuffer.wrap(obj))
+          closureSerializer.deserialize[Option[Aggregator[Any, Any, Any]]](ByteBuffer.wrap(obj))
       }
     }
     None
@@ -198,7 +234,7 @@ private[spark] class SGXWorker(closureSer: SerializerInstance, dataSer: Serializ
         case orderingSize if orderingSize > 0 =>
           val obj = new Array[Byte](orderingSize)
           inSock.readFully(obj)
-          return closureSer.deserialize[Option[Ordering[Any]]](ByteBuffer.wrap(obj))
+          return closureSerializer.deserialize[Option[Ordering[Any]]](ByteBuffer.wrap(obj))
       }
     }
     None
@@ -212,7 +248,7 @@ private[spark] class SGXWorker(closureSer: SerializerInstance, dataSer: Serializ
         case func_size if func_size > 0 =>
           val obj = new Array[Byte](func_size)
           inSock.readFully(obj)
-          val closure = closureSer.deserialize[SGXFunction](ByteBuffer.wrap(obj))
+          val closure = closureSerializer.deserialize[SGXFunction](ByteBuffer.wrap(obj))
           logInfo(s"Successfully read ${closure}")
           functionArr.append(closure)
         case SpecialSGXChars.END_OF_FUNC_SECTION =>
@@ -284,7 +320,6 @@ private[spark] class ReaderIterator[IN: ClassTag](stream: DataInputStream, dataS
 private[deploy] object SGXWorker extends Logging {
   val conf = new SparkConf(loadDefaults = false)
   var dataSerializer: SerializerInstance = _
-  val closureSerializer: SerializerInstance = new JavaSerializer(SGXWorker.conf).newInstance()
 
   def localConnect(address: String, port: Int): Socket = {
     try {
@@ -323,7 +358,7 @@ private[deploy] object SGXWorker extends Logging {
     val workerSerializer = sys.env("SGX_WORKER_SERIALIZER")
     dataSerializer = SGXWorker.instantiateClass[Serializer](workerSerializer).newInstance()
 
-    val worker = new SGXWorker(closureSerializer, dataSerializer)
+    val worker = new SGXWorker(dataSerializer)
 
     val address = sys.env("SGXLKL_GW4")
     val port = if (workerDebugEnabled) 65000 else sys.env("SGX_WORKER_FACTORY_PORT").toInt

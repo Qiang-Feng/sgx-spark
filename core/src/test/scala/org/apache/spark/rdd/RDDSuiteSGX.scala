@@ -345,10 +345,7 @@ class RDDSuiteSGX extends SparkFunSuite {
     dos.writeInt(SpecialSGXChars.END_OF_STREAM)
     dos.flush()
 
-    val worker = new SGXWorker(
-      SparkEnv.get.closureSerializer.newInstance(),
-      SparkEnv.get.serializer.newInstance()
-    )
+    val worker = new SGXWorker(SparkEnv.get.serializer.newInstance())
     // Convert bytestream to input
     val bais = new ByteArrayInputStream(baos.toByteArray)
     val dis = new DataInputStream(bais)
