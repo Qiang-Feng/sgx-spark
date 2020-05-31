@@ -31,11 +31,6 @@ DEFAULT_CLASSPATH = [
 ]
 
 def daemon():
-    # Load Dockerfile template
-    df_template = ""
-    with open("Dockerfile", "r") as df:
-        df_template += df.read()
-
     stdin_bin = os.fdopen(sys.stdin.fileno(), "rb", 4)
     stdout_bin = os.fdopen(sys.stdout.fileno(), "wb", 4)
 
