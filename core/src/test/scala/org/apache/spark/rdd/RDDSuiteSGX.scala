@@ -326,6 +326,9 @@ class RDDSuiteSGX extends SparkFunSuite {
     SGXRDD.writeUTF(SparkFiles.getRootDirectory(), dos)
     dos.flush()
 
+    // Write JARs
+    dos.writeInt(SpecialSGXChars.END_OF_JARS)
+
     dos.writeInt(SGXFunctionType.NON_UDF)
     // Func serialize
     val command = SparkEnv.get.closureSerializer.newInstance().serialize(Left(test_func))
