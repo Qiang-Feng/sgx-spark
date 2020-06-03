@@ -30,6 +30,7 @@ import org.apache.spark._
 import org.apache.spark.api.sgx.Types.SGXFunction
 import org.apache.spark.internal.Logging
 import org.apache.spark.util.Utils
+import org.apache.spark.serializer.SerializerInstance
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -45,7 +46,9 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
   private val bufferSize = conf.getInt("spark.buffer.size", 65536)
 
   val closureSer = SparkEnv.get.closureSerializer.newInstance()
-  val iteratorSer = SparkEnv.get.serializer.newInstance()
+  val iteratorSer = new ThreadLocal[SerializerInstance] {
+    override def initialValue(): SerializerInstance = SparkEnv.get.serializer.newInstance()
+  }
 
   protected val envVars = collection.mutable.Map[String, String]()
   // Expose a ServerSocket to support method calls via socket from SGX side
@@ -298,7 +301,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
             val obj = new Array[Byte](length)
             stream.readFully(obj)
             // Not necessary if we are dealing just with bytes
-            iteratorSer.deserialize[OUT](ByteBuffer.wrap(obj))
+            iteratorSer.get.deserialize[OUT](ByteBuffer.wrap(obj))
           case SpecialSGXChars.EMPTY_DATA =>
             // Array.empty[Byte]
             null.asInstanceOf[OUT]
