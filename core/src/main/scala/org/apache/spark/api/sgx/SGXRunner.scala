@@ -73,7 +73,7 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
 
       /** Writes input data to the stream connected to the SGX worker */
       override protected def writeIteratorToStream(dataOut: DataOutputStream): Unit = {
-        SGXRDD.writeIteratorToStream(inputIterator, iteratorSer, dataOut)
+        SGXRDD.writeIteratorToStream(inputIterator, iteratorSer.get, dataOut)
         dataOut.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         dataOut.flush()
       }
@@ -111,4 +111,3 @@ private[spark] class SGXRunner(func: SGXFunction, funcType: Int, funcs: ArrayBuf
     }
   }
 }
-
