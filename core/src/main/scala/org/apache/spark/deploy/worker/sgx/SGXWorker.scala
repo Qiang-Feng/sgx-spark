@@ -46,6 +46,16 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
   val shuffleMemoryBytesSpilled: Int = 0
   val shuffleDiskBytesSpilled: Int = 0
 
+  def writeObjectToStream(dataOut: DataOutputStream, obj: Any): Unit = obj match {
+    case null =>
+      dataOut.writeInt(SpecialSGXChars.NULL)
+    case _ =>
+      val outSerArray = dataSer.serialize(obj).array()
+      dataOut.writeInt(outSerArray.length)
+      logDebug(s"SGX => Writing: ${obj}")
+      dataOut.write(outSerArray)
+  }
+
   def process(inSock: DataInputStream, outSock: DataOutputStream): Unit = {
     val bootTime = System.nanoTime()
 
@@ -120,11 +130,9 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
         // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
         val keyMapping = scala.collection.mutable.Map[Any, Any]()
-        while (iterator.hasNext) {
-          val record = iterator.next()
-          keyMapping(record._1) = sgxPartitioner.getPartition(record._1)
+        iterator.foreach { record =>
+          writeObjectToStream(outSock, (record._1, sgxPartitioner.getPartition(record._1)))
         }
-        SGXRDD.writeIteratorToStream[Any](keyMapping.toIterator, dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
 
@@ -138,13 +146,9 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
         // Perform the sorting and aggregation
         val sorter = new MinimalExternalSorter(aggregator, Some(sgxPartitioner), ordering)
         sorter.insertAll(iterator)
-        val tmpIterator = sorter.iterator
-
-        while (tmpIterator.hasNext) {
-          val record = tmpIterator.next()
-          keyMapping(record._1) = sgxPartitioner.getPartition(record._1)
+        sorter.iterator.foreach { record =>
+          writeObjectToStream(outSock, (record._1, sgxPartitioner.getPartition(record._1)))
         }
-        SGXRDD.writeIteratorToStream[Any](keyMapping.toIterator, dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
 
@@ -181,6 +185,7 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
               res = b(partitionId, input).asInstanceOf[Iterator[Any]]
           }
         }
+        logInfo("Writing results to stream")
         SGXRDD.writeIteratorToStream[Any](res, dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()

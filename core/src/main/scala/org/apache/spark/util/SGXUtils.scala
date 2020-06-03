@@ -59,9 +59,5 @@ object SGXUtils {
   /**
     * Dummy closure to maintain API consisent (used for shuffles - even though not used)
     */
-  val toIteratorSizeSGXFunc = (itr: Iterator[Any]) => {
-    val result = new mutable.ArrayBuffer[Any]
-    itr.foreach(e => result.append(e))
-    result.toArray.iterator
-  }
+  val toIteratorSizeSGXFunc = (itr: Iterator[Any]) => itr
 }
