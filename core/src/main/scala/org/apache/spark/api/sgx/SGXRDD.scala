@@ -84,7 +84,7 @@ private[spark] object SGXRDD extends Logging {
   def readUTF(dataIn: DataInputStream): String = {
     val strLen = dataIn.readInt()
     val strBytes = new Array[Byte](strLen)
-    dataIn.read(strBytes)
+    dataIn.readFully(strBytes)
     new String(strBytes, StandardCharsets.UTF_8)
   }
 
