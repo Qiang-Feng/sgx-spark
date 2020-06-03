@@ -298,10 +298,12 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
       try {
         stream.readInt() match {
           case length if length > 0 =>
-            val obj = new Array[Byte](length)
-            stream.readFully(obj)
-            // Not necessary if we are dealing just with bytes
-            iteratorSer.get.deserialize[OUT](ByteBuffer.wrap(obj))
+            val obj = ByteBuffer.allocate(length)
+            for (_ <- 0 until length) {
+              obj.put(stream.readByte())
+            }
+            obj.rewind()
+            iteratorSer.get.deserialize[OUT](obj)
           case SpecialSGXChars.EMPTY_DATA =>
             // Array.empty[Byte]
             null.asInstanceOf[OUT]
