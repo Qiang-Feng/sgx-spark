@@ -61,6 +61,7 @@ def daemon():
 
             # Launch the SGX Worker process using the newly created image
             worker_command = 'SGXLKL_VERBOSE=1 ' \
+                             'SGXLKL_HD_KEY={}/sgx-worker.img.enc.int.key ' \
                              'SGXLKL_TAP={} ' \
                              'SGXLKL_IP4={} ' \
                              'SGXLKL_GW4={} ' \
