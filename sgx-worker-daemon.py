@@ -64,20 +64,19 @@ def daemon():
             # Copy base image
             image_name = uuid.uuid4()
             shutil.copy(
-                "{}/workers/base.img.enc.int".format(SPARK_HOME),
-                "{}/workers/{}.img.enc.int".format(SPARK_HOME, image_name)
+                "{}/workers/base.img".format(SPARK_HOME),
+                "{}/workers/{}.img".format(SPARK_HOME, image_name)
             )
 
             # Launch the SGX Worker process using the newly created image
             worker_command = 'SGXLKL_KERNEL_VERBOSE=1 SGXLKL_VERBOSE=1 ' \
-                             'SGXLKL_HD_KEY={}/workers/base.img.enc.int.key ' \
                              'SGXLKL_TAP={} ' \
                              'SGXLKL_IP4={} ' \
                              'SGXLKL_GW4={} ' \
                              'sgx-lkl-java ' \
-                             '{}/workers/{}.img.enc.int ' \
+                             '{}/workers/{}.img ' \
                              '-cp "{}" ' \
-                             'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(SPARK_HOME, tap.name, ip_worker, ip_host, SPARK_HOME, image_name, ":".join(DEFAULT_CLASSPATH))
+                             'org.apache.spark.deploy.worker.sgx.SGXWorker'.format(tap.name, ip_worker, ip_host, SPARK_HOME, image_name, ":".join(DEFAULT_CLASSPATH))
             print("Running {}".format(worker_command), file=sys.stderr)
             worker = subprocess.Popen(
                 [worker_command],
