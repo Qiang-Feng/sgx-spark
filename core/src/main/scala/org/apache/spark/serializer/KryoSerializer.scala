@@ -72,7 +72,7 @@ class KryoSerializer(conf: SparkConf)
   }
   private val maxBufferSize = ByteUnit.MiB.toBytes(maxBufferSizeMb).toInt
 
-  private val referenceTracking = conf.getBoolean("spark.kryo.referenceTracking", true)
+  private val referenceTracking = conf.getBoolean("spark.kryo.referenceTracking", false)
   private val registrationRequired = conf.getBoolean("spark.kryo.registrationRequired", false)
   private val userRegistrators = conf.get("spark.kryo.registrator", "")
     .split(',').map(_.trim)
