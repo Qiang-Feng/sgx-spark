@@ -19,8 +19,8 @@ package org.apache.spark.api.sgx
 
 import java.io.{DataInputStream, DataOutputStream, File, InputStream}
 import java.net.{InetAddress, ServerSocket, Socket, SocketException, URI}
-import java.nio.charset.StandardCharsets
 import java.util.Arrays
+import java.util.concurrent.LinkedBlockingQueue
 
 import scala.collection.JavaConverters._
 import org.apache.spark.{SparkEnv, SparkException, SparkFiles}
@@ -43,12 +43,11 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
 
   val simpleWorkers = new mutable.WeakHashMap[Socket, Process]()
   val daemonWorkers = new mutable.WeakHashMap[Socket, Int]()
-  val idleWorkers = new mutable.Queue[Socket]()
+  val idleWorkers = new LinkedBlockingQueue[Socket]()
   val workerJars = new mutable.WeakHashMap[Socket, mutable.Set[String]]()
 
   /**
-   * TODO: start-sgx-slave.sh no longer works as we rely on the daemon
-   *       to generate the SGXWorker disk image.
+   * TODO: start-sgx-slave.sh no longer works.
    */
   @deprecated private def createSimpleSGXWorker(): Socket = {
     var serverSocket: ServerSocket = null
@@ -101,12 +100,8 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
   def create(): (Socket, mutable.Set[String]) = {
     if (useDaemon) {
       synchronized {
-        if (daemonWorkers.size >= MAX_WORKERS) {
-          if (idleWorkers.isEmpty) {
-            // Wait until we have an idle worker
-            wait()
-          }
-          val worker = idleWorkers.dequeue()
+        if (!idleWorkers.isEmpty || daemonWorkers.size >= MAX_WORKERS) {
+          val worker = idleWorkers.take()
           return (worker, workerJars(worker))
         }
       }
@@ -199,8 +194,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
       synchronized {
         // TODO: Monitor idle workers and kill after timeout
         // lastActivity = System.currentTimeMillis()
-        idleWorkers.enqueue(worker)
-        notify()
+        idleWorkers.add(worker)
       }
     } else {
       try {
@@ -262,8 +256,8 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
   }
 
   private def cleanupIdleWorkers() {
-    while (idleWorkers.nonEmpty) {
-      val worker = idleWorkers.dequeue()
+    while (!idleWorkers.isEmpty) {
+      val worker = idleWorkers.take()
       try {
         worker.close()
       } catch {
