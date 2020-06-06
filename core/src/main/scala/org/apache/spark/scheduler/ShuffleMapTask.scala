@@ -32,6 +32,8 @@ import org.apache.spark.shuffle.ShuffleWriter
 import org.apache.spark.shuffle.sort.SortShuffleWriter
 import org.apache.spark.util.SGXUtils
 
+import scala.collection.mutable.ArrayBuffer
+
 /**
  * A ShuffleMapTask divides the elements of an RDD into multiple buckets (based on a partitioner
  * specified in the ShuffleDependency).
@@ -102,26 +104,30 @@ private[spark] class ShuffleMapTask(
 
       if (SparkEnv.get.conf.isSGXWorkerEnabled()) {
         // Compute the RDD for everything until this shuffle
-        // Otherwise we don't know which records to map to which
         rdd.sgxCompute(partition, context)
-        var records = rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]]
+        val keyMap = scala.collection.mutable.Map[Any, Integer]()
 
-        if (!SortShuffleWriter.shouldBypassMergeSort(SparkEnv.get.conf, dep)) {
+        if (SortShuffleWriter.shouldBypassMergeSort(SparkEnv.get.conf, dep)) {
+          // Uses SGXRunner to compute the partitions each record should map to
+          val keyMapping = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_MAP_BYPASS)
+            .compute(rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]], partitionId, context,
+              None, None, dep.partitioner.numPartitions).asInstanceOf[Iterator[(Any, Integer)]]
+          for ((k, p) <- keyMapping) keyMap(k) = p
+          writer.sgxWrite(rdd.iterator(partition, context).asInstanceOf[Iterator[(Any, Any)]], keyMap.asJava)
+        } else {
           // Uses SGXRunner to aggregate and get partitions each aggregated record is mapped to
-          records = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_REDUCE)
-            .compute(records, partitionId, context,
+          val keyMappingAndRecords = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_REDUCE)
+            .compute(rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]], partitionId, context,
               dep.aggregator.asInstanceOf[Option[Aggregator[Any, Any, Any]]],
               dep.keyOrdering.asInstanceOf[Option[Ordering[Any]]],
-              dep.partitioner.numPartitions)
+              dep.partitioner.numPartitions).asInstanceOf[Iterator[((Any, Any), Integer)]]
+          val aggregatedRecords = new ArrayBuffer[(Any, Any)]()
+          for (((k, v), p) <- keyMappingAndRecords) {
+            keyMap(k) = p
+            aggregatedRecords.append((k, v))
+          }
+          writer.sgxWrite(aggregatedRecords.iterator, keyMap.asJava)
         }
-
-        // Uses SGXRunner to compute the partitions each record should map to
-        val keyMapping = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_MAP_BYPASS)
-          .compute(records, partitionId, context, None, None, dep.partitioner.numPartitions)
-          .asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
-        val keyMap = scala.collection.mutable.Map[Any, Integer]()
-        for (i <- keyMapping) keyMap(i._1) = i._2.asInstanceOf[Integer]
-        writer.sgxWrite(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]], keyMap.asJava)
       } else {
         writer.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
       }

@@ -70,7 +70,6 @@ private[spark] object SGXRDD extends Logging {
         dataOut.writeInt(outSerArray.length)
         logDebug(s"SGX => Writing: ${obj}")
         dataOut.write(outSerArray)
-        // throw new SparkException("Unexpected element type " + other.getClass)
     }
     iter.foreach(write)
   }

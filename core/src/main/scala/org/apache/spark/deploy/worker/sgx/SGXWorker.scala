@@ -46,16 +46,6 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
   val shuffleMemoryBytesSpilled: Int = 0
   val shuffleDiskBytesSpilled: Int = 0
 
-  def writeObjectToStream(dataOut: DataOutputStream, obj: Any): Unit = obj match {
-    case null =>
-      dataOut.writeInt(SpecialSGXChars.NULL)
-    case _ =>
-      val outSerArray = dataSer.serialize(obj).array()
-      dataOut.writeInt(outSerArray.length)
-      logDebug(s"SGX => Writing: ${obj}")
-      dataOut.write(outSerArray)
-  }
-
   def process(inSock: DataInputStream, outSock: DataOutputStream): Unit = {
     val bootTime = System.nanoTime()
 
@@ -126,27 +116,30 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
 
       case SGXFunctionType.SHUFFLE_MAP_BYPASS =>
         logDebug(s"ShuffleMap Bypass with ${numOfPartitions} partition(s)")
-        val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+        val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[(Any, Any)]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
-        // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
-        val keyMapping = scala.collection.mutable.Map[Any, Any]()
-        iterator.foreach { record =>
-          writeObjectToStream(outSock, (record._1, sgxPartitioner.getPartition(record._1)))
+        // Mapping of encrypted keys to partitions (needed by the shuffle Writer)
+        val keyMap = iterator.map { case (k, _) =>
+          (k, sgxPartitioner.getPartition(k))
         }
+        SGXRDD.writeIteratorToStream(keyMap, dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
 
       case SGXFunctionType.SHUFFLE_REDUCE =>
         logInfo(s"Shuffle Reduce with ${numOfPartitions} partition(s)")
-        val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+        val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[(Any, Any)]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
 
-        // Perform the sorting and aggregation
+        // Perform the sorting, aggregation and pair with reduce-side partition
         val sorter = new MinimalExternalSorter(aggregator, Some(sgxPartitioner), ordering)
         sorter.insertAll(iterator)
+        val recordMap = sorter.iterator.map { case (k, v) =>
+          ((k, v), sgxPartitioner.getPartition(k))
+        }
 
         // Write aggregated and sorted records
-        SGXRDD.writeIteratorToStream[Any](sorter.iterator.asInstanceOf[Iterator[Any]], dataSer, outSock)
+        SGXRDD.writeIteratorToStream(recordMap, dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
 
