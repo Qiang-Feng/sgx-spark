@@ -106,16 +106,9 @@ private[spark] class SortShuffleWriter[K, V, C](
     // Make a partitioner from the given recordMapping
     val partitioner = new MappingPartitioner(dep.partitioner.numPartitions, recordMapping)
 
-    sorter = if (dep.mapSideCombine) {
-      new ExternalSorter[K, V, C](
-        context, dep.aggregator, Some(partitioner), dep.keyOrdering, dep.serializer)
-    } else {
-      // In this case we pass neither an aggregator nor an ordering to the sorter, because we don't
-      // care whether the keys get sorted in each partition; that will be done on the reduce side
-      // if the operation being run is sortByKey.
-      new ExternalSorter[K, V, V](
+    // Records should already by aggregated and sorted per partition
+    sorter = new ExternalSorter[K, V, V](
         context, aggregator = None, Some(partitioner), ordering = None, dep.serializer)
-    }
     sorter.insertAll(records)
 
     // Don't bother including the time to open the merged output file in the shuffle write time,
