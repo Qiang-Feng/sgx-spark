@@ -104,19 +104,21 @@ private[spark] class ShuffleMapTask(
         // Compute the RDD for everything until this shuffle
         // Otherwise we don't know which records to map to which
         rdd.sgxCompute(partition, context)
+        var records = rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]]
 
-        val functionType = if (SortShuffleWriter.shouldBypassMergeSort(SparkEnv.get.conf, dep)) {
-          SGXFunctionType.SHUFFLE_MAP_BYPASS
-        } else {
-          SGXFunctionType.SHUFFLE_REDUCE
+        if (!SortShuffleWriter.shouldBypassMergeSort(SparkEnv.get.conf, dep)) {
+          // Uses SGXRunner to aggregate and get partitions each aggregated record is mapped to
+          records = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_REDUCE)
+            .compute(records, partitionId, context,
+              dep.aggregator.asInstanceOf[Option[Aggregator[Any, Any, Any]]],
+              dep.keyOrdering.asInstanceOf[Option[Ordering[Any]]],
+              dep.partitioner.numPartitions)
         }
 
         // Uses SGXRunner to compute the partitions each record should map to
-        val runner = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), functionType)
-        // Need to explicitly set the number of partitions here
-        val keyMapping = runner.compute(rdd.iterator(partition, context).asInstanceOf[Iterator[Array[Byte]]],
-          partitionId, context, dep.aggregator.asInstanceOf[Option[Aggregator[Any, Any, Any]]], dep.keyOrdering.asInstanceOf[Option[Ordering[Any]]],
-          dep.partitioner.numPartitions).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+        val keyMapping = SGXRunner(Left(SGXUtils.toIteratorSizeSGXFunc), SGXFunctionType.SHUFFLE_MAP_BYPASS)
+          .compute(records, partitionId, context, None, None, dep.partitioner.numPartitions)
+          .asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
         val keyMap = scala.collection.mutable.Map[Any, Integer]()
         for (i <- keyMapping) keyMap(i._1) = i._2.asInstanceOf[Integer]
         writer.sgxWrite(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]], keyMap.asJava)

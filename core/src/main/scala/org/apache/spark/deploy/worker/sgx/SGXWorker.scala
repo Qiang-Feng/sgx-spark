@@ -140,15 +140,13 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
         logInfo(s"Shuffle Reduce with ${numOfPartitions} partition(s)")
         val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
-        // Mapping of encrypted keys to partitions (needed by the shuffler Writer)
-        val keyMapping = scala.collection.mutable.Map[Any, Any]()
 
         // Perform the sorting and aggregation
         val sorter = new MinimalExternalSorter(aggregator, Some(sgxPartitioner), ordering)
         sorter.insertAll(iterator)
-        sorter.iterator.foreach { record =>
-          writeObjectToStream(outSock, (record._1, sgxPartitioner.getPartition(record._1)))
-        }
+
+        // Write aggregated and sorted records
+        SGXRDD.writeIteratorToStream[Any](sorter.iterator.asInstanceOf[Iterator[Any]], dataSer, outSock)
         outSock.writeInt(SpecialSGXChars.END_OF_DATA_SECTION)
         outSock.flush()
 
