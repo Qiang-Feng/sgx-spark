@@ -32,6 +32,8 @@ import scala.collection.mutable
 private[spark] class SGXWorkerFactory(envVars: Map[String, String])
   extends Logging {
 
+  val MAX_WORKERS = 2
+
   val sgxWorkerModule = "org.apache.spark.deploy.worker.sgx.SGXWorker"
   val sgxWorkerExec = s"${System.getenv("SPARK_HOME")}/sbin/start-sgx-slave.sh"
 
@@ -99,7 +101,11 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
   def create(): (Socket, mutable.Set[String]) = {
     if (useDaemon) {
       synchronized {
-        if (idleWorkers.nonEmpty) {
+        if (daemonWorkers.size >= MAX_WORKERS) {
+          if (idleWorkers.isEmpty) {
+            // Wait until we have an idle worker
+            wait()
+          }
           val worker = idleWorkers.dequeue()
           return (worker, workerJars(worker))
         }
@@ -194,6 +200,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
         // TODO: Monitor idle workers and kill after timeout
         // lastActivity = System.currentTimeMillis()
         idleWorkers.enqueue(worker)
+        notify()
       }
     } else {
       try {
