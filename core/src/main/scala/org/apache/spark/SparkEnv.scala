@@ -122,9 +122,7 @@ class SparkEnv (
 
   private[spark]
   def createSGXWorker(envVars: Map[String, String]): (java.net.Socket, mutable.Set[String]) = {
-    synchronized {
-      sgxWorkers.getOrElseUpdate(envVars, new SGXWorkerFactory(envVars)).create()
-    }
+    sgxWorkers.getOrElseUpdate(envVars, new SGXWorkerFactory(envVars)).create()
   }
 
   private[spark]
@@ -145,9 +143,7 @@ class SparkEnv (
 
   private[spark]
   def releaseSGXWorker(envVars: Map[String, String], worker: Socket) {
-    synchronized {
-      sgxWorkers.get(envVars).foreach(_.releaseWorker(worker))
-    }
+    sgxWorkers.get(envVars).foreach(_.releaseWorker(worker))
   }
 }
 

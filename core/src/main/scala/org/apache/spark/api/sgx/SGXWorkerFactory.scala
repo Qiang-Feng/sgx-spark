@@ -20,17 +20,16 @@ package org.apache.spark.api.sgx
 import java.io.{DataInputStream, DataOutputStream, File, InputStream}
 import java.net.{InetAddress, ServerSocket, Socket, SocketException, URI}
 import java.util.Arrays
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ArrayBlockingQueue
 
 import scala.collection.JavaConverters._
-import org.apache.spark.{SparkEnv, SparkException, SparkFiles}
+import org.apache.spark.{SparkEnv, SparkException}
 import org.apache.spark.internal.Logging
 import org.apache.spark.util.{RedirectThread, Utils}
 
 import scala.collection.mutable
 
-private[spark] class SGXWorkerFactory(envVars: Map[String, String])
-  extends Logging {
+private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logging {
 
   val MAX_WORKERS = 2
 
@@ -43,7 +42,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
 
   val simpleWorkers = new mutable.WeakHashMap[Socket, Process]()
   val daemonWorkers = new mutable.WeakHashMap[Socket, Int]()
-  val idleWorkers = new LinkedBlockingQueue[Socket]()
+  val idleWorkers = new ArrayBlockingQueue[Socket](MAX_WORKERS)
   val workerJars = new mutable.WeakHashMap[Socket, mutable.Set[String]]()
 
   /**
