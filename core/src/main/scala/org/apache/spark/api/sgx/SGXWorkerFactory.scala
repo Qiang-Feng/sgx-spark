@@ -20,7 +20,7 @@ package org.apache.spark.api.sgx
 import java.io.{DataInputStream, DataOutputStream, File, InputStream}
 import java.net.{InetAddress, ServerSocket, Socket, SocketException, URI}
 import java.util.Arrays
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.{ArrayBlockingQueue, Semaphore}
 
 import scala.collection.JavaConverters._
 import org.apache.spark.{SparkEnv, SparkException}
@@ -31,8 +31,7 @@ import scala.collection.mutable
 
 private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logging {
 
-  val MAX_WORKERS = 2
-
+  val maxWorkers = SparkEnv.get.conf.getInt("spark.sgx.worker.max", 2)
   val sgxWorkerModule = "org.apache.spark.deploy.worker.sgx.SGXWorker"
   val sgxWorkerExec = s"${System.getenv("SPARK_HOME")}/sbin/start-sgx-slave.sh"
 
@@ -42,8 +41,9 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
 
   val simpleWorkers = new mutable.WeakHashMap[Socket, Process]()
   val daemonWorkers = new mutable.WeakHashMap[Socket, Int]()
-  val idleWorkers = new ArrayBlockingQueue[Socket](MAX_WORKERS)
+  val idleWorkers = new ArrayBlockingQueue[Socket](maxWorkers)
   val workerJars = new mutable.WeakHashMap[Socket, mutable.Set[String]]()
+  var workersToSpawn = new Semaphore(maxWorkers)
 
   /**
    * TODO: start-sgx-slave.sh no longer works.
@@ -98,18 +98,31 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
 
   def create(): (Socket, mutable.Set[String]) = {
     if (useDaemon) {
-      if (!idleWorkers.isEmpty || daemonWorkers.size >= MAX_WORKERS) {
-        val worker = idleWorkers.take()
-        return (worker, workerJars(worker))
+      startDaemon()
+
+      while (true) {
+        // Get an existing worker if available, or if we have reached max
+        if (!idleWorkers.isEmpty || workersToSpawn.availablePermits() == 0) {
+          val worker = idleWorkers.take()
+          return (worker, workerJars(worker))
+        }
+
+        // Try to spawn a new worker
+        tryCreateThroughDaemon()
       }
-      createThroughDaemon()
+
+      logError("Failed to create new SGXWorker")
+      (null, null)
     } else {
-      (createSimpleSGXWorker(), new mutable.HashSet[String]())
+      (createSimpleSGXWorker(), mutable.Set())
     }
   }
 
-  private def createThroughDaemon(): (Socket, mutable.Set[String]) = {
-    def createSocket(): (Socket, mutable.Set[String]) = {
+  /**
+   * Creates a new SGXWorker and adds it to the idleWorkers
+   */
+  private def tryCreateThroughDaemon(): Unit = synchronized {
+    if (workersToSpawn.tryAcquire(1)) {
       val serverSocketPort = if (SparkEnv.get.conf.isSGXDebugEnabled()) 65000 else 0
       var serverSocket: ServerSocket = null
 
@@ -120,7 +133,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
         val outputStream = new DataOutputStream(daemon.getOutputStream)
 
         // Write the server socket port to the daemon
-        logInfo(s"Unsecure worker port: ${serverSocket.getLocalPort.toString}")
+        logInfo(s"Unencrypted worker port: ${serverSocket.getLocalPort.toString}")
         outputStream.writeInt(serverSocket.getLocalPort)
         outputStream.flush()
         daemon.getOutputStream.flush()
@@ -131,11 +144,9 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
 
           val inputStream = new DataInputStream(daemon.getInputStream)
           val workerPid = inputStream.readInt()
-          val socketJars = mutable.HashSet[String]()
           daemonWorkers.put(socket, workerPid)
-          workerJars.put(socket, socketJars)
-
-          (socket, socketJars)
+          workerJars.put(socket, mutable.Set[String]())
+          idleWorkers.put(socket)
         } catch {
           case e: Exception =>
             throw new SparkException("SGXWorker worker failed to connect back.", e)
@@ -144,23 +155,6 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
         if (serverSocket != null) {
           serverSocket.close()
         }
-      }
-    }
-
-    synchronized {
-      // Start the daemon if it hasn't been started
-      startDaemon()
-
-      // Attempt to connect, restart and retry once if it fails
-      try {
-        createSocket()
-      } catch {
-        case exc: SocketException =>
-          logWarning("Failed to open socket to Python daemon:", exc)
-          logWarning("Assuming that daemon unexpectedly quit, attempting to restart")
-          stopDaemon()
-          startDaemon()
-          createSocket()
       }
     }
   }
@@ -255,6 +249,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
       val worker = idleWorkers.take()
       try {
         worker.close()
+        // Maybe release workersToSpawn permit here?
       } catch {
         case e: Exception =>
           logWarning("Failed to close worker socket", e)
