@@ -6,4 +6,4 @@ sudo killall python
 
 for i in {0..50}; do sudo ip tuntap del dev tap${i} mode tap; done;
 
-find workers -type f -not -name 'base.img' -delete
+find workers -type f -not -name 'base*' -delete
