@@ -140,6 +140,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
 
         try {
           val socket = serverSocket.accept()
+          socket.setSoTimeout(0)
           log.info(s"SGXWorker successfully connected at Port:${serverSocket.getLocalPort}")
 
           val inputStream = new DataInputStream(daemon.getInputStream)

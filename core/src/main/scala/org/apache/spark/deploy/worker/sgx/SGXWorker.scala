@@ -359,7 +359,7 @@ private[deploy] object SGXWorker extends Logging {
     val address = sys.env("SGXLKL_GW4")
     val port = if (workerDebugEnabled) 65000 else sys.env("SGX_WORKER_FACTORY_PORT").toInt
     val socket = localConnect(address, port)
-    socket.setSoTimeout(5 * 60 * 1000)
+    socket.setSoTimeout(0)
 
     val outStream = new DataOutputStream(socket.getOutputStream())
     val inStream = new DataInputStream(socket.getInputStream())
