@@ -19,7 +19,8 @@ package org.apache.spark
 
 import java.io.File
 import java.net.Socket
-import java.util.Locale
+import java.util.{Locale, function}
+import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.mutable
 import scala.util.Properties
@@ -72,7 +73,7 @@ class SparkEnv (
   private[spark] var isStopped = false
   private[spark] val newJars = mutable.Set[String]()
   private val pythonWorkers = mutable.HashMap[(String, Map[String, String]), PythonWorkerFactory]()
-  private val sgxWorkers = mutable.HashMap[Map[String, String], SGXWorkerFactory]()
+  private val sgxWorkers = new ConcurrentHashMap[Map[String, String], SGXWorkerFactory]()
 
   // A general, soft-reference map for metadata needed during HadoopRDD split computation
   // (e.g., HadoopFileRDD uses this to cache JobConfs and InputFormats).
@@ -122,7 +123,9 @@ class SparkEnv (
 
   private[spark]
   def createSGXWorker(envVars: Map[String, String]): (java.net.Socket, mutable.Set[String]) = {
-    sgxWorkers.getOrElseUpdate(envVars, new SGXWorkerFactory(envVars)).create()
+    sgxWorkers.computeIfAbsent(envVars, new function.Function[Map[String, String], SGXWorkerFactory] {
+      override def apply(e: Map[String, String]): SGXWorkerFactory = new SGXWorkerFactory(e)
+    }).create()
   }
 
   private[spark]
@@ -143,7 +146,7 @@ class SparkEnv (
 
   private[spark]
   def releaseSGXWorker(envVars: Map[String, String], worker: Socket) {
-    sgxWorkers.get(envVars).foreach(_.releaseWorker(worker))
+    sgxWorkers.get(envVars).releaseWorker(worker)
   }
 }
 
