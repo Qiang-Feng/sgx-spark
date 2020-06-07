@@ -357,14 +357,18 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
       //        //        accumulator.add(update)
       //      }
       // Check whether the worker is ready to be re-used.
-      if (stream.readInt() == SpecialSGXChars.END_OF_STREAM) {
-        if (reuseWorker && releasedOrClosed.compareAndSet(false, true)) {
-          logWarning("SGX Worker now ready to be released!")
-          env.releaseSGXWorker(envVars.toMap, worker)
-        }
-      }
       eos = true
       writerThread.finishProcessing()
+
+      val status = stream.readInt()
+      if (status == SpecialSGXChars.END_OF_STREAM) {
+        if (reuseWorker && releasedOrClosed.compareAndSet(false, true)) {
+          logInfo("SGX Worker now ready to be released!")
+          env.releaseSGXWorker(envVars.toMap, worker)
+        }
+      } else {
+        logError(s"Unexpected status received: ${status}")
+      }
     }
 
     protected val handleException: PartialFunction[Throwable, OUT] = {

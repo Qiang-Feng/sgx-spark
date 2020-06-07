@@ -146,7 +146,7 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
           val workerPid = inputStream.readInt()
           daemonWorkers.put(socket, workerPid)
           workerJars.put(socket, mutable.Set[String]())
-          idleWorkers.put(socket)
+          idleWorkers.add(socket)
         } catch {
           case e: Exception =>
             throw new SparkException("SGXWorker worker failed to connect back.", e)
