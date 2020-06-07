@@ -358,9 +358,8 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
       //      }
       // Check whether the worker is ready to be re-used.
       eos = true
-      writerThread.finishProcessing()
-
       val status = stream.readInt()
+      writerThread.finishProcessing()
       if (status == SpecialSGXChars.END_OF_STREAM) {
         if (reuseWorker && releasedOrClosed.compareAndSet(false, true)) {
           logInfo("SGX Worker now ready to be released!")
