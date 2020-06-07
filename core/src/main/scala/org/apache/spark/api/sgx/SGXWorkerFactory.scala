@@ -99,11 +99,9 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
 
   def create(): (Socket, mutable.Set[String]) = {
     if (useDaemon) {
-      synchronized {
-        if (!idleWorkers.isEmpty || daemonWorkers.size >= MAX_WORKERS) {
-          val worker = idleWorkers.take()
-          return (worker, workerJars(worker))
-        }
+      if (!idleWorkers.isEmpty || daemonWorkers.size >= MAX_WORKERS) {
+        val worker = idleWorkers.take()
+        return (worker, workerJars(worker))
       }
       createThroughDaemon()
     } else {
@@ -191,11 +189,9 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String])
 
   def releaseWorker(worker: Socket) {
     if (useDaemon) {
-      synchronized {
-        // TODO: Monitor idle workers and kill after timeout
-        // lastActivity = System.currentTimeMillis()
-        idleWorkers.add(worker)
-      }
+      // TODO: Monitor idle workers and kill after timeout
+      // lastActivity = System.currentTimeMillis()
+      idleWorkers.add(worker)
     } else {
       try {
         worker.close()
