@@ -67,8 +67,6 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
     envVars.put("SPARK_LOCAL_DIRS", localdir) // it's also used in monitor thread
 
     val (worker, workerJars) = env.createSGXWorker(envVars.toMap)
-    worker.setSoTimeout(5 * 60 * 1000)
-    worker.setSoLinger(true, 60 * 1000)
     // Whether is the worker released into idle pool or closed
     // TODO: Reuse workers from the pool
     val releasedOrClosed = new AtomicBoolean(false)
