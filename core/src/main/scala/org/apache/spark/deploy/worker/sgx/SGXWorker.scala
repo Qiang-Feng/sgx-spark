@@ -115,7 +115,7 @@ private[spark] class SGXWorker(dataSer: SerializerInstance) extends Logging {
     evalType match {
 
       case SGXFunctionType.SHUFFLE_MAP_BYPASS =>
-        logDebug(s"ShuffleMap Bypass with ${numOfPartitions} partition(s)")
+        logInfo(s"ShuffleMap Bypass with ${numOfPartitions} partition(s)")
         val iterator = new ReaderIterator(inSock, dataSer).asInstanceOf[Iterator[(Any, Any)]]
         val sgxPartitioner = new SGXPartitioner(numOfPartitions)
         // Mapping of encrypted keys to partitions (needed by the shuffle Writer)
