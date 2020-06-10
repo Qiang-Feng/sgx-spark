@@ -135,7 +135,7 @@ private[spark] abstract class SGXBaseRunner[IN: ClassTag, OUT: ClassTag](
 
     /** Writes the FINISHED_PROCESSING signal to the SGX worker */
     def finishProcessing(): Unit = {
-      val dataOut = new DataOutputStream(worker.getOutputStream)
+      val dataOut = new DataOutputStream(new BufferedOutputStream(worker.getOutputStream, bufferSize))
       dataOut.writeInt(SpecialSGXChars.FINISH_PROCESSING)
       dataOut.flush()
       worker.getOutputStream.flush()

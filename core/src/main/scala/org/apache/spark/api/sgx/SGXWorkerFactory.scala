@@ -80,6 +80,8 @@ private[spark] class SGXWorkerFactory(envVars: Map[String, String]) extends Logg
 
       try {
         val socket = serverSocket.accept()
+        socket.setSendBufferSize(65536)
+        socket.setReceiveBufferSize(65536)
         log.info(s"SGXWorker successfully connected at Port:${serverSocket.getLocalPort}")
         simpleWorkers.put(socket, worker)
         return socket

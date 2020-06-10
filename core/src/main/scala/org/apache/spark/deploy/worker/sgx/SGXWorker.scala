@@ -17,7 +17,7 @@
 
 package org.apache.spark.deploy.worker.sgx
 
-import java.io.{DataInputStream, DataOutputStream, EOFException, File, IOException}
+import java.io.{BufferedInputStream, BufferedOutputStream, DataInputStream, DataOutputStream, EOFException, File, IOException}
 import java.net.{InetAddress, Socket, URL}
 import java.nio.ByteBuffer
 import java.nio.file.Files
@@ -360,9 +360,11 @@ private[deploy] object SGXWorker extends Logging {
     val port = if (workerDebugEnabled) 65000 else sys.env("SGX_WORKER_FACTORY_PORT").toInt
     val socket = localConnect(address, port)
     socket.setSoTimeout(0)
+    socket.setSendBufferSize(65536)
+    socket.setReceiveBufferSize(65536)
 
-    val outStream = new DataOutputStream(socket.getOutputStream())
-    val inStream = new DataInputStream(socket.getInputStream())
+    val outStream = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream(), 65536))
+    val inStream = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 65536))
 
     var runWorker = true
     while (runWorker) {
